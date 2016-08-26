@@ -168,6 +168,12 @@ class DataTransformer {
   float augmentation_rotate(Mat& img_src, Mat& img_aug, MetaData& meta);
   float augmentation_scale(Mat& img, Mat& img_temp, MetaData& meta);
   Size augmentation_croppad(Mat& img_temp, Mat& img_aug, MetaData& meta);
+
+  bool augmentation_flip(Mat& img, Mat& img_aug, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode);
+  float augmentation_rotate(Mat& img_src, Mat& img_aug, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode);
+  float augmentation_scale(Mat& img, Mat& img_temp, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode);
+  Size augmentation_croppad(Mat& img_temp, Mat& img_aug, Mat& mask_miss, Mat& mask_miss_aug, Mat& mask_all, Mat& mask_all_aug, MetaData& meta, int mode);
+
   void RotatePoint(Point2f& p, Mat R);
   bool onPlane(Point p, Size img_size);
   void swapLeftRight(Joints& j);
@@ -197,6 +203,8 @@ class DataTransformer {
   void TransformJoints(Joints& joints);
   void clahe(Mat& img, int, int);
   void putGaussianMaps(Dtype* entry, Point2f center, int stride, int grid_x, int grid_y, float sigma);
+  void putVecMaps(Dtype* entryX, Dtype* entryY, Mat& count, Point2f centerA, Point2f centerB, int stride, int grid_x, int grid_y, float sigma, int thre);
+  void putVecPeaks(Dtype* entryX, Dtype* entryY, Mat& count, Point2f centerA, Point2f centerB, int stride, int grid_x, int grid_y, float sigma, int thre);
   void dumpEverything(Dtype* transformed_data, Dtype* transformed_label, MetaData);
 
   // Tranformation parameters

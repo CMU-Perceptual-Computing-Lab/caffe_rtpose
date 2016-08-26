@@ -71,6 +71,7 @@ void DataTransformer<Dtype>::ReadMetaData(MetaData& meta, const string& data, si
         << "; meta.annolist_index: " << meta.annolist_index << "; meta.write_number: " << meta.write_number
         << "; meta.total_write_number: " << meta.total_write_number << "; meta.epoch: " << meta.epoch;
   }
+  //LOG(INFO) << "np_in_lmdb" << np_in_lmdb;
   if(param_.aug_way() == "table" && !is_table_set){
     SetAugTable(meta.total_write_number);
     is_table_set = true;
@@ -90,10 +91,15 @@ void DataTransformer<Dtype>::ReadMetaData(MetaData& meta, const string& data, si
     meta.joint_self.joints[i] -= Point2f(1,1); //from matlab 1-index to c++ 0-index
     float isVisible;
     DecodeFloats(data, offset3+7*offset1+4*i, &isVisible, 1);
-    meta.joint_self.isVisible[i] = (isVisible == 0) ? 0 : 1;
-    if(meta.joint_self.joints[i].x < 0 || meta.joint_self.joints[i].y < 0 ||
-       meta.joint_self.joints[i].x >= meta.img_size.width || meta.joint_self.joints[i].y >= meta.img_size.height){
-      meta.joint_self.isVisible[i] = 2; // 2 means cropped, 0 means occluded by still on image
+    if (isVisible == 3){
+      meta.joint_self.isVisible[i] = 3;
+    }
+    else{
+      meta.joint_self.isVisible[i] = (isVisible == 0) ? 0 : 1;
+      if(meta.joint_self.joints[i].x < 0 || meta.joint_self.joints[i].y < 0 ||
+         meta.joint_self.joints[i].x >= meta.img_size.width || meta.joint_self.joints[i].y >= meta.img_size.height){
+        meta.joint_self.isVisible[i] = 2; // 2 means cropped, 0 means occluded by still on image
+      }
     }
     //LOG(INFO) << meta.joint_self.joints[i].x << " " << meta.joint_self.joints[i].y << " " << meta.joint_self.isVisible[i];
   }
@@ -123,6 +129,7 @@ void DataTransformer<Dtype>::ReadMetaData(MetaData& meta, const string& data, si
          meta.joint_others[p].joints[i].x >= meta.img_size.width || meta.joint_others[p].joints[i].y >= meta.img_size.height){
         meta.joint_others[p].isVisible[i] = 2; // 2 means cropped, 1 means occluded by still on image
       }
+      //LOG(INFO) << meta.joint_others[p].joints[i].x << " " << meta.joint_others[p].joints[i].y << " " << meta.joint_others[p].isVisible[i];
     }
   }
 }
@@ -149,6 +156,7 @@ void DataTransformer<Dtype>::SetAugTable(int numData){
       flip_file >> aug_flips[i][j];
     }
   }
+  //debug
   // for(int i = 0; i < numData; i++){
   //   for(int j = 0; j < param_.num_total_augs(); j++){
   //     printf("%d ", (int)aug_degs[i][j]);
@@ -187,6 +195,25 @@ void DataTransformer<Dtype>::TransformJoints(Joints& j) {
       jo.isVisible[i] = j.isVisible[MPI_to_ours[i]];
     }
   }
+  else if(np == 27){
+    int MPI_to_ours_1[27] = {9, 8,12,11,10,13,14,15, 2, 1, 0, 3, 4, 5, 8, 8, \
+                             9, 8,12,11, 8,13,14, 2, 1, 3, 4};
+                          //17,18,19,20,21,22,23,24,25,26,27
+    int MPI_to_ours_2[27] = {9, 8,12,11,10,13,14,15, 2, 1, 0, 3, 4, 5, 2, 3, \
+                             8,12,11,10,13,14,15, 1, 0, 4, 5};
+                          //17,18,19,20,21,22,23,24,25,26,27
+    jo.joints.resize(np);
+    jo.isVisible.resize(np);
+    for(int i=0;i<np;i++){
+      jo.joints[i] = (j.joints[MPI_to_ours_1[i]] + j.joints[MPI_to_ours_2[i]]) * 0.5;
+      if(j.isVisible[MPI_to_ours_1[i]]==2 || j.isVisible[MPI_to_ours_2[i]]==2){
+        jo.isVisible[i] = 2;
+      }
+      else {
+        jo.isVisible[i] = j.isVisible[MPI_to_ours_1[i]] && j.isVisible[MPI_to_ours_2[i]];
+      }
+    }
+  }
   else if(np == 28){
     int MPI_to_ours_1[28] = {9, 8,12,11,10,13,14,15, 2, 1, 0, 3, 4, 5, 7, 6, \
                              9, 8,12,11, 8,13,14, 2, 1, 3, 4, 6};
@@ -205,6 +232,372 @@ void DataTransformer<Dtype>::TransformJoints(Joints& j) {
         jo.isVisible[i] = j.isVisible[MPI_to_ours_1[i]] && j.isVisible[MPI_to_ours_2[i]];
       }
     }
+  }
+  else if(np == 29){
+    int MPI_to_ours_1[28] = {9, 8,12,11,10,13,14,15, 2, 1, 0, 3, 4, 5, 7, 6, \
+                             9, 8,12,11, 8,13,14, 2, 1, 3, 4, 6};
+    int MPI_to_ours_2[28] = {9, 8,12,11,10,13,14,15, 2, 1, 0, 3, 4, 5, 7, 6, \
+                             8,12,11,10,13,14,15, 1, 0, 4, 5, 7};
+    jo.joints.resize(np);
+    jo.isVisible.resize(np);
+    for(int i=0;i<np-1;i++){
+      jo.joints[i] = (j.joints[MPI_to_ours_1[i]] + j.joints[MPI_to_ours_2[i]]) * 0.5;
+      if(j.isVisible[MPI_to_ours_1[i]]==2 || j.isVisible[MPI_to_ours_2[i]]==2){
+        jo.isVisible[i] = 2;
+      }
+      else {
+        jo.isVisible[i] = j.isVisible[MPI_to_ours_1[i]] && j.isVisible[MPI_to_ours_2[i]];
+      }
+    }
+
+    jo.joints[28] = jo.joints[27];
+    jo.isVisible[28] = jo.isVisible[27];
+    int corr_1[3] = {8, 11, 1};
+    int change[3] = {14, 15, 27};
+    for(int i=0;i<3;i++){
+      jo.joints[change[i]] = (jo.joints[corr_1[i]] + jo.joints[28]) * 0.5; 
+      if(jo.isVisible[corr_1[i]]==2 || jo.isVisible[28]==2){
+        jo.isVisible[change[i]] = 2;
+      }
+      else {
+        jo.isVisible[change[i]] = jo.isVisible[corr_1[i]] && jo.isVisible[28];
+      }
+    } 
+  }
+
+  else if(np == 33){
+    int COCO_to_ours_1[18] = {1,6, 7,9,11, 6,8,10, 13,15,17, 12,14,16, 3,2,5,4};
+    int COCO_to_ours_2[18] = {1,7, 7,9,11, 6,8,10, 13,15,17, 12,14,16, 3,2,5,4};
+    jo.joints.resize(np);
+    jo.isVisible.resize(np);
+    for(int i=0;i<18;i++){
+      jo.joints[i] = (j.joints[COCO_to_ours_1[i]-1] + j.joints[COCO_to_ours_2[i]-1]) * 0.5;
+      if(j.isVisible[COCO_to_ours_1[i]-1]==2 || j.isVisible[COCO_to_ours_2[i]-1]==2){
+        jo.isVisible[i] = 2;
+      }
+      else if(j.isVisible[COCO_to_ours_1[i]-1]==3 || j.isVisible[COCO_to_ours_2[i]-1]==3){
+        jo.isVisible[i] = 3;
+      }
+      else {
+        jo.isVisible[i] = j.isVisible[COCO_to_ours_1[i]-1] && j.isVisible[COCO_to_ours_2[i]-1];
+      }
+    }
+    //LOG(INFO) << "here " ;
+
+    int mid_1[15] = {1, 3,  3, 4, 6,  6, 7, 9,  10, 12, 13, 3, 6,  15, 16};
+    int mid_2[15] = {2, 17, 4, 5, 18, 7, 8, 10, 11, 13, 14, 9, 12, 17, 18};
+
+    for(int i=0;i<15;i++){
+      if(jo.isVisible[mid_1[i]-1]==2 || jo.isVisible[mid_2[i]-1]==2){
+        jo.isVisible[i + 18] = 2;
+      }
+      else if(j.isVisible[COCO_to_ours_1[i]-1]==3 || j.isVisible[COCO_to_ours_2[i]-1]==3){
+        jo.isVisible[i] = 3;
+      }
+      else {
+        jo.isVisible[i + 18] = jo.isVisible[mid_1[i]-1] && jo.isVisible[mid_2[i]-1];
+      }
+
+      jo.joints[i + 18] = jo.joints[mid_1[i]-1]*0.5 + jo.joints[mid_2[i]-1]*0.5;
+    } 
+  }
+
+  else if(np == 34){
+    int COCO_to_ours_1[18] = {1,6, 7,9,11, 6,8,10, 13,15,17, 12,14,16, 3,2,5,4};
+    int COCO_to_ours_2[18] = {1,7, 7,9,11, 6,8,10, 13,15,17, 12,14,16, 3,2,5,4};
+    jo.joints.resize(np);
+    jo.isVisible.resize(np);
+    for(int i=0;i<18;i++){
+      jo.joints[i] = (j.joints[COCO_to_ours_1[i]-1] + j.joints[COCO_to_ours_2[i]-1]) * 0.5;
+      if(j.isVisible[COCO_to_ours_1[i]-1]==2 || j.isVisible[COCO_to_ours_2[i]-1]==2){
+        jo.isVisible[i] = 2;
+      }
+      else if(j.isVisible[COCO_to_ours_1[i]-1]==3 || j.isVisible[COCO_to_ours_2[i]-1]==3){
+        jo.isVisible[i] = 3;
+      }
+      else {
+        jo.isVisible[i] = j.isVisible[COCO_to_ours_1[i]-1] && j.isVisible[COCO_to_ours_2[i]-1];
+      }
+    }
+    //LOG(INFO) << "here " ;
+
+    int mid_1[16] = {15, 3,  3, 4, 6,  6, 7, 9,  10, 12, 13, 9,  2,  15, 16, 1};
+    int mid_2[16] = {16, 17, 4, 5, 18, 7, 8, 10, 11, 13, 14, 12, 30, 17, 18, 2};
+
+    for(int i=0;i<16;i++){
+      if(jo.isVisible[mid_1[i]-1]==2 || jo.isVisible[mid_2[i]-1]==2){
+        jo.isVisible[i + 18] = 2;
+      }
+      else if(j.isVisible[COCO_to_ours_1[i]-1]==3 || j.isVisible[COCO_to_ours_2[i]-1]==3){
+        jo.isVisible[i] = 3;
+      }
+      else {
+        jo.isVisible[i + 18] = jo.isVisible[mid_1[i]-1] && jo.isVisible[mid_2[i]-1];
+      }
+
+      jo.joints[i + 18] = jo.joints[mid_1[i]-1]*0.5 + jo.joints[mid_2[i]-1]*0.5;
+    } 
+  }
+
+  else if(np == 36){
+    int num_kpt = 8;
+    int COCO_to_ours[8] = {7,6,9,8,11,10,13,12};
+    jo.joints.resize(np);
+    jo.isVisible.resize(np);
+    for(int i=0;i<num_kpt;i++){
+      jo.joints[i] = j.joints[COCO_to_ours[i]-1];
+      jo.isVisible[i] = j.isVisible[COCO_to_ours[i]-1];
+    }
+    
+    int cnt = num_kpt;
+    for(int i=1;i<num_kpt;i++){
+      for(int j=i+1;j<=num_kpt;j++){
+        if(jo.isVisible[i-1]==2 || jo.isVisible[j-1]==2){
+          jo.isVisible[cnt] = 2;
+        }
+        else if(jo.isVisible[i-1]==3 || jo.isVisible[j-1]==3){
+          jo.isVisible[cnt] = 3;
+        }
+        else {
+          jo.isVisible[cnt] = jo.isVisible[i-1] && jo.isVisible[j-1];
+        }
+
+        jo.joints[cnt] = jo.joints[i-1]*0.5 + jo.joints[j-1]*0.5;
+        cnt = cnt + 1;
+        //cout << i << " " << j << " " << cnt <<" " << endl;
+      }
+    } 
+  }
+
+  else if(np == 37){
+    int COCO_to_ours_1[18] = {1,6, 7,9,11, 6,8,10, 13,15,17, 12,14,16, 3,2,5,4};
+    int COCO_to_ours_2[18] = {1,7, 7,9,11, 6,8,10, 13,15,17, 12,14,16, 3,2,5,4};
+    jo.joints.resize(np);
+    jo.isVisible.resize(np);
+    for(int i=0;i<18;i++){
+      jo.joints[i] = (j.joints[COCO_to_ours_1[i]-1] + j.joints[COCO_to_ours_2[i]-1]) * 0.5;
+      if(j.isVisible[COCO_to_ours_1[i]-1]==2 || j.isVisible[COCO_to_ours_2[i]-1]==2){
+        jo.isVisible[i] = 2;
+      }
+      else if(j.isVisible[COCO_to_ours_1[i]-1]==3 || j.isVisible[COCO_to_ours_2[i]-1]==3){
+        jo.isVisible[i] = 3;
+      }
+      else {
+        jo.isVisible[i] = j.isVisible[COCO_to_ours_1[i]-1] && j.isVisible[COCO_to_ours_2[i]-1];
+      }
+    }
+    //LOG(INFO) << "here " ;
+  }
+
+  else if(np == 43){
+    int MPI_to_ours_1[15] = {9, 8,12,11,10,13,14,15, 2, 1, 0, 3, 4, 5, 7};
+    int MPI_to_ours_2[15] = {9, 8,12,11,10,13,14,15, 2, 1, 0, 3, 4, 5, 6};
+    jo.joints.resize(np);
+    jo.isVisible.resize(np);
+
+    for(int i=0;i<15;i++){
+      jo.joints[i] = (j.joints[MPI_to_ours_1[i]] + j.joints[MPI_to_ours_2[i]]) * 0.5;
+      if(j.isVisible[MPI_to_ours_1[i]]==2 || j.isVisible[MPI_to_ours_2[i]]==2){
+        jo.isVisible[i] = 2;
+      }
+      else if(j.isVisible[MPI_to_ours_1[i]]==3 || j.isVisible[MPI_to_ours_2[i]]==3){
+        jo.isVisible[i] = 3;
+      }
+      else {
+        jo.isVisible[i] = j.isVisible[MPI_to_ours_1[i]] && j.isVisible[MPI_to_ours_2[i]];
+      }
+    }
+
+    int mid_1[14] = {0, 1, 2, 3, 1, 5, 6, 1, 14, 8, 9,  14, 11, 12};
+    int mid_2[14] = {1, 2, 3, 4, 5, 6, 7, 14, 8, 9, 10, 11, 12, 13};
+
+    for(int i=0;i<14;i++){
+       
+      if(jo.isVisible[mid_1[i]]==2 || jo.isVisible[mid_2[i]]==2){
+        jo.isVisible[2*i + 15] = 2;
+        jo.isVisible[2*i + 16] = 2;
+      }
+      else if(jo.isVisible[mid_1[i]]==3 || jo.isVisible[mid_2[i]]==3){
+        jo.isVisible[2*i + 15] = 3;
+        jo.isVisible[2*i + 16] = 3;
+      }
+      else {
+        jo.isVisible[2*i + 15] = jo.isVisible[mid_1[i]] && jo.isVisible[mid_2[i]];
+        jo.isVisible[2*i + 16] = jo.isVisible[2*i + 15];
+      }
+
+      jo.joints[2*i + 15] = jo.joints[mid_1[i]]*0.6667 + jo.joints[mid_2[i]]*0.3333;
+      jo.joints[2*i + 16] = jo.joints[mid_1[i]]*0.3333 + jo.joints[mid_2[i]]*0.6667;
+    } 
+  }
+
+  else if(np == 52){
+    int COCO_to_ours_1[18] = {1,6, 7,9,11, 6,8,10, 13,15,17, 12,14,16, 3,2,5,4};
+    int COCO_to_ours_2[18] = {1,7, 7,9,11, 6,8,10, 13,15,17, 12,14,16, 3,2,5,4};
+    jo.joints.resize(np);
+    jo.isVisible.resize(np);
+    for(int i=0;i<18;i++){
+      jo.joints[i] = (j.joints[COCO_to_ours_1[i]-1] + j.joints[COCO_to_ours_2[i]-1]) * 0.5;
+      if(j.isVisible[COCO_to_ours_1[i]-1]==2 || j.isVisible[COCO_to_ours_2[i]-1]==2){
+        jo.isVisible[i] = 2;
+      }
+      else if(j.isVisible[COCO_to_ours_1[i]-1]==3 || j.isVisible[COCO_to_ours_2[i]-1]==3){
+        jo.isVisible[i] = 3;
+      }
+      else {
+        jo.isVisible[i] = j.isVisible[COCO_to_ours_1[i]-1] && j.isVisible[COCO_to_ours_2[i]-1];
+      }
+    }
+    //LOG(INFO) << "here " ;
+
+    int mid_1[19] = {2, 9,  10, 2,  12, 13, 2, 3, 4, 3,  2, 6, 7, 6,  2, 1,  1,  15, 16};
+    int mid_2[19] = {9, 10, 11, 12, 13, 14, 3, 4, 5, 17, 6, 7, 8, 18, 1, 15, 16, 17, 18};
+    // 19 -- 48
+    for(int i=0;i<15;i++){
+      if(jo.isVisible[mid_1[i]-1]==2 || jo.isVisible[mid_2[i]-1]==2){
+        jo.isVisible[2*i + 18] = 2;
+        jo.isVisible[2*i + 19] = 2;
+      }
+      else if(jo.isVisible[mid_1[i]-1]==3 || jo.isVisible[mid_2[i]-1]==3){
+        jo.isVisible[2*i + 18] = 3;
+        jo.isVisible[2*i + 19] = 3;
+      }
+      else {
+        jo.isVisible[2*i + 18] = jo.isVisible[mid_1[i]-1] && jo.isVisible[mid_2[i]-1];
+        jo.isVisible[2*i + 19] = jo.isVisible[2*i + 18];
+      }
+
+      jo.joints[2*i + 18] = jo.joints[mid_1[i]-1]*0.6667 + jo.joints[mid_2[i]-1]*0.3333;
+      jo.joints[2*i + 19] = jo.joints[mid_1[i]-1]*0.3333 + jo.joints[mid_2[i]-1]*0.6667;
+    }
+    // 49 -- 52
+    for(int i=15;i<19;i++){
+      if(jo.isVisible[mid_1[i]-1]==2 || jo.isVisible[mid_2[i]-1]==2){
+        jo.isVisible[i + 33] = 2;
+      }
+      else {
+        jo.isVisible[i + 33] = jo.isVisible[mid_1[i]-1] && jo.isVisible[mid_2[i]-1];
+      }
+      jo.joints[i + 33] = jo.joints[mid_1[i]-1]*0.5 + jo.joints[mid_2[i]-1]*0.5;
+    }
+  }
+
+  else if(np == 56){
+    int COCO_to_ours_1[18] = {1,6, 7,9,11, 6,8,10, 13,15,17, 12,14,16, 3,2,5,4};
+    int COCO_to_ours_2[18] = {1,7, 7,9,11, 6,8,10, 13,15,17, 12,14,16, 3,2,5,4};
+    jo.joints.resize(np);
+    jo.isVisible.resize(np);
+    for(int i=0;i<18;i++){
+      jo.joints[i] = (j.joints[COCO_to_ours_1[i]-1] + j.joints[COCO_to_ours_2[i]-1]) * 0.5;
+      if(j.isVisible[COCO_to_ours_1[i]-1]==2 || j.isVisible[COCO_to_ours_2[i]-1]==2){
+        jo.isVisible[i] = 2;
+      }
+      else if(j.isVisible[COCO_to_ours_1[i]-1]==3 || j.isVisible[COCO_to_ours_2[i]-1]==3){
+        jo.isVisible[i] = 3;
+      }
+      else {
+        jo.isVisible[i] = j.isVisible[COCO_to_ours_1[i]-1] && j.isVisible[COCO_to_ours_2[i]-1];
+      }
+    }
+    //LOG(INFO) << "here " ;
+
+    // int mid_1[19] = {2, 9,  10, 2,  12, 13, 2, 3, 4, 3,  2, 6, 7, 6,  2, 1,  1,  15, 16};
+    // int mid_2[19] = {9, 10, 11, 12, 13, 14, 3, 4, 5, 17, 6, 7, 8, 18, 1, 15, 16, 17, 18};
+    // // 19 -- 48
+    // for(int i=0;i<19;i++){
+    //   if(jo.isVisible[mid_1[i]-1]==2 || jo.isVisible[mid_2[i]-1]==2){
+    //     jo.isVisible[2*i + 18] = 2;
+    //     jo.isVisible[2*i + 19] = 2;
+    //   }
+    //   else if(jo.isVisible[mid_1[i]-1]==3 || jo.isVisible[mid_2[i]-1]==3){
+    //     jo.isVisible[2*i + 18] = 3;
+    //     jo.isVisible[2*i + 19] = 3;
+    //   }
+    //   else {
+    //     jo.isVisible[2*i + 18] = jo.isVisible[mid_1[i]-1] && jo.isVisible[mid_2[i]-1];
+    //     jo.isVisible[2*i + 19] = jo.isVisible[2*i + 18];
+    //   }
+
+    //   jo.joints[2*i + 18] = jo.joints[mid_1[i]-1]*0.6667 + jo.joints[mid_2[i]-1]*0.3333;
+    //   jo.joints[2*i + 19] = jo.joints[mid_1[i]-1]*0.3333 + jo.joints[mid_2[i]-1]*0.6667;
+    // }
+  }
+
+  else if(np == 75){
+    int COCO_to_ours_1[18] = {1,6, 7,9,11, 6,8,10, 13,15,17, 12,14,16, 3,2,5,4};
+    int COCO_to_ours_2[18] = {1,7, 7,9,11, 6,8,10, 13,15,17, 12,14,16, 3,2,5,4};
+    jo.joints.resize(np);
+    jo.isVisible.resize(np);
+    for(int i=0;i<18;i++){
+      jo.joints[i] = (j.joints[COCO_to_ours_1[i]-1] + j.joints[COCO_to_ours_2[i]-1]) * 0.5;
+      if(j.isVisible[COCO_to_ours_1[i]-1]==2 || j.isVisible[COCO_to_ours_2[i]-1]==2){
+        jo.isVisible[i] = 2;
+      }
+      else if(j.isVisible[COCO_to_ours_1[i]-1]==3 || j.isVisible[COCO_to_ours_2[i]-1]==3){
+        jo.isVisible[i] = 3;
+      }
+      else {
+        jo.isVisible[i] = j.isVisible[COCO_to_ours_1[i]-1] && j.isVisible[COCO_to_ours_2[i]-1];
+      }
+    }
+    //LOG(INFO) << "here " ;
+
+    int mid_1[19] = {2, 9,  10, 2,  12, 13, 2, 3, 4, 3,  2, 6, 7, 6,  2, 1,  1,  15, 16};
+    int mid_2[19] = {9, 10, 11, 12, 13, 14, 3, 4, 5, 17, 6, 7, 8, 18, 1, 15, 16, 17, 18};
+    // 19 -- 48
+    for(int i=0;i<19;i++){
+      if(jo.isVisible[mid_1[i]-1]==2 || jo.isVisible[mid_2[i]-1]==2){
+        jo.isVisible[3*i + 18] = 2;
+        jo.isVisible[3*i + 19] = 2;
+        jo.isVisible[3*i + 20] = 2;
+      }
+      else if(jo.isVisible[mid_1[i]-1]==3 || jo.isVisible[mid_2[i]-1]==3){
+        jo.isVisible[3*i + 18] = 3;
+        jo.isVisible[3*i + 19] = 3;
+        jo.isVisible[3*i + 20] = 3;
+      }
+      else {
+        jo.isVisible[3*i + 18] = jo.isVisible[mid_1[i]-1] && jo.isVisible[mid_2[i]-1];
+        jo.isVisible[3*i + 19] = jo.isVisible[3*i + 18];
+        jo.isVisible[3*i + 20] = jo.isVisible[3*i + 18];
+      }
+
+      jo.joints[3*i + 18] = jo.joints[mid_1[i]-1]*0.75 + jo.joints[mid_2[i]-1]*0.25;
+      jo.joints[3*i + 19] = jo.joints[mid_1[i]-1]*0.50 + jo.joints[mid_2[i]-1]*0.50;
+      jo.joints[3*i + 20] = jo.joints[mid_1[i]-1]*0.25 + jo.joints[mid_2[i]-1]*0.75;
+    }
+  }
+
+  else if(np == 78){
+    int num_kpt = 12;
+    int COCO_to_ours[12] = {7,6,9,8,11,10,13,12,15,14,17,16};
+    jo.joints.resize(np);
+    jo.isVisible.resize(np);
+    for(int i=0;i<num_kpt;i++){
+      jo.joints[i] = j.joints[COCO_to_ours[i]-1];
+      if(j.isVisible[COCO_to_ours[i]-1]==2){
+        jo.isVisible[i] = 2;
+      }
+      else {
+        jo.isVisible[i] = j.isVisible[COCO_to_ours[i]-1];
+      }
+    }
+    
+    int cnt = num_kpt;
+    for(int i=1;i<num_kpt;i++){
+      for(int j=i+1;j<=num_kpt;j++){
+        if(jo.isVisible[i-1]==2 || jo.isVisible[j-1]==2){
+          jo.isVisible[cnt] = 2;
+        }
+        else {
+          jo.isVisible[cnt] = jo.isVisible[i-1] && jo.isVisible[j-1];
+        }
+
+        jo.joints[cnt] = jo.joints[i-1]*0.5 + jo.joints[j-1]*0.5;
+        cnt = cnt + 1;
+        //cout << i << " " << j << " " << cnt <<" " << endl;
+      }
+    } 
   }
   j = jo;
 }
@@ -232,6 +625,7 @@ template<typename Dtype> DataTransformer<Dtype>::DataTransformer(const Transform
   }
   LOG(INFO) << "DataTransformer constructor done.";
   np_in_lmdb = param_.np_in_lmdb();
+  LOG(INFO) << "np_in_lmdb" << np_in_lmdb;
   np = param_.num_parts();
   is_table_set = false;
 }
@@ -355,11 +749,21 @@ template<typename Dtype> void DataTransformer<Dtype>::Transform(const Datum& dat
 
 template<typename Dtype> void DataTransformer<Dtype>::Transform_nv(const Datum& datum, Blob<Dtype>* transformed_data, Blob<Dtype>* transformed_label, int cnt) {
   //std::cout << "Function 2 is used"; std::cout.flush();
+  // int offset = datum.height()*datum.width();
+  // int offset3 = 3 * offset;
+  // int offset1 = datum.width();
+  // MetaData meta;
+  // ReadMetaData(meta, datum.data(), offset3, offset1);
+  // LOG(INFO) << "dataset: " << meta.dataset <<"; img_size: " << meta.img_size
+  //       << "; meta.annolist_index: " << meta.annolist_index;
+
   const int datum_channels = datum.channels();
+  //LOG(INFO) << datum.channels();
   //const int datum_height = datum.height();
   //const int datum_width = datum.width();
 
   const int im_channels = transformed_data->channels();
+  //LOG(INFO) << im_channels;
   //const int im_height = transformed_data->height();
   //const int im_width = transformed_data->width();
   const int im_num = transformed_data->num();
@@ -374,8 +778,13 @@ template<typename Dtype> void DataTransformer<Dtype>::Transform_nv(const Datum& 
   //LOG(INFO) << "label shape: " << transformed_label->num() << " " << transformed_label->channels() << " " 
   //                             << transformed_label->height() << " " << transformed_label->width();
 
-  CHECK_EQ(datum_channels, 4);
-  CHECK_EQ(im_channels, 4);
+  CHECK_EQ(datum_channels, 6);
+  CHECK_EQ(im_channels, 6);
+  //CHECK_EQ(im_channels, 4);
+  //CHECK_EQ(datum_channels, 4);
+  //CHECK_EQ(im_channels, 5);
+  //CHECK_EQ(datum_channels, 5);
+
   CHECK_EQ(im_num, lb_num);
   //CHECK_LE(im_height, datum_height);
   //CHECK_LE(im_width, datum_width);
@@ -413,8 +822,11 @@ template<typename Dtype> void DataTransformer<Dtype>::Transform_nv(const Datum& 
   
   const string& data = datum.data();
   const int datum_channels = datum.channels();
+  //LOG(INFO) << datum.channels();
   const int datum_height = datum.height();
   const int datum_width = datum.width();
+  // To do: make this a parameter in caffe.proto
+  const int mode = 6; //related to datum.channels();
 
   //const int crop_size = param_.crop_size();
   //const Dtype scale = param_.scale();
@@ -431,6 +843,14 @@ template<typename Dtype> void DataTransformer<Dtype>::Transform_nv(const Datum& 
 
   //before any transformation, get the image from datum
   Mat img = Mat::zeros(datum_height, datum_width, CV_8UC3);
+  Mat mask_all, mask_miss;
+  if(mode >= 5){
+    mask_miss = Mat::ones(datum_height, datum_width, CV_8UC1);
+  }
+  if(mode == 6){
+    mask_all = Mat::zeros(datum_height, datum_width, CV_8UC1);
+  }
+
   int offset = img.rows * img.cols;
   int dindex;
   Dtype d_element;
@@ -445,8 +865,45 @@ template<typename Dtype> void DataTransformer<Dtype>::Transform_nv(const Datum& 
           d_element = datum.float_data(dindex);
         rgb[c] = d_element;
       }
+
+      if(mode >= 5){
+        dindex = 4*offset + i*img.cols + j;
+        if (has_uint8)
+          d_element = static_cast<Dtype>(static_cast<uint8_t>(data[dindex]));
+        else
+          d_element = datum.float_data(dindex);
+        if (round(d_element/255)!=1 && round(d_element/255)!=0){
+          cout << d_element << " " << round(d_element/255) << endl;
+        }
+        mask_miss.at<uchar>(i, j) = d_element; //round(d_element/255);
+      }
+
+      if(mode == 6){
+        dindex = 5*offset + i*img.cols + j;
+        if (has_uint8)
+          d_element = static_cast<Dtype>(static_cast<uint8_t>(data[dindex]));
+        else
+          d_element = datum.float_data(dindex);
+        mask_all.at<uchar>(i, j) = d_element;
+      }
     }
   }
+
+  //testing image
+  //imshow("mask_miss",mask_miss);
+  //imshow("mask_all",mask_all);
+  // if(mode >= 5){
+  //   Mat erosion_dst;
+  //   int erosion_size = 1;
+  //   mask_miss = 1.0/255 *mask_miss;
+  //   Mat element = getStructuringElement( MORPH_ELLIPSE,
+  //                                    Size( 2*erosion_size + 1, 2*erosion_size+1 ),
+  //                                    Point( erosion_size, erosion_size ) );
+  //   erode( mask_miss, erosion_dst, element );
+  //   erosion_dst = 255 *erosion_dst;
+  //   imshow( "Erosion Demo", erosion_dst );
+  // }
+  
 
   //color, contract
   if(param_.do_clahe())
@@ -458,6 +915,7 @@ template<typename Dtype> void DataTransformer<Dtype>::Transform_nv(const Datum& 
 
   int offset3 = 3 * offset;
   int offset1 = datum_width;
+  int stride = param_.stride();
   ReadMetaData(meta, data, offset3, offset1);
   if(param_.transform_body_joint()) // we expect to transform body joints, and not to transform hand joints
     TransformMetaJoints(meta);
@@ -468,27 +926,41 @@ template<typename Dtype> void DataTransformer<Dtype>::Transform_nv(const Datum& 
 
   //Start transforming
   Mat img_aug = Mat::zeros(crop_y, crop_x, CV_8UC3);
+  Mat mask_miss_aug, mask_all_aug ;
+  //Mat mask_miss_aug = Mat::zeros(crop_y, crop_x, CV_8UC1);
+  //Mat mask_all_aug = Mat::zeros(crop_y, crop_x, CV_8UC1);
   Mat img_temp, img_temp2, img_temp3; //size determined by scale
   // We only do random transform as augmentation when training.
   if (phase_ == TRAIN) {
-    as.scale = augmentation_scale(img, img_temp, meta);
+    as.scale = augmentation_scale(img, img_temp, mask_miss, mask_all, meta, mode);
     //LOG(INFO) << meta.joint_self.joints.size();
     //LOG(INFO) << meta.joint_self.joints[0];
-    as.degree = augmentation_rotate(img_temp, img_temp2, meta);
+    as.degree = augmentation_rotate(img_temp, img_temp2, mask_miss, mask_all, meta, mode);
     //LOG(INFO) << meta.joint_self.joints.size();
     //LOG(INFO) << meta.joint_self.joints[0];
     if(0 && param_.visualize()) 
       visualize(img_temp2, meta, as);
-    as.crop = augmentation_croppad(img_temp2, img_temp3, meta);
+    as.crop = augmentation_croppad(img_temp2, img_temp3, mask_miss, mask_miss_aug, mask_all, mask_all_aug, meta, mode);
     //LOG(INFO) << meta.joint_self.joints.size();
     //LOG(INFO) << meta.joint_self.joints[0];
     if(0 && param_.visualize()) 
       visualize(img_temp3, meta, as);
-    as.flip = augmentation_flip(img_temp3, img_aug, meta);
+    as.flip = augmentation_flip(img_temp3, img_aug, mask_miss_aug, mask_all_aug, meta, mode);
     //LOG(INFO) << meta.joint_self.joints.size();
     //LOG(INFO) << meta.joint_self.joints[0];
     if(param_.visualize()) 
       visualize(img_aug, meta, as);
+
+    // imshow("img_aug", img_aug);
+    // Mat label_map = mask_miss_aug;
+    // applyColorMap(label_map, label_map, COLORMAP_JET);
+    // addWeighted(label_map, 0.5, img_aug, 0.5, 0.0, label_map);
+    // imshow("mask_miss_aug", label_map);
+
+    if (mode > 4){
+      resize(mask_miss_aug, mask_miss_aug, Size(), 1.0/stride, 1.0/stride, INTER_CUBIC);
+      resize(mask_all_aug, mask_all_aug, Size(), 1.0/stride, 1.0/stride, INTER_CUBIC);
+    }
   }
   else {
     img_aug = img.clone();
@@ -502,17 +974,52 @@ template<typename Dtype> void DataTransformer<Dtype>::Transform_nv(const Datum& 
 
   //copy transformed img (img_aug) into transformed_data, do the mean-subtraction here
   offset = img_aug.rows * img_aug.cols;
+  int rezX = img_aug.cols;
+  int rezY = img_aug.rows;
+  int grid_x = rezX / stride;
+  int grid_y = rezY / stride;
+  int channelOffset = grid_y * grid_x;
+
   for (int i = 0; i < img_aug.rows; ++i) {
     for (int j = 0; j < img_aug.cols; ++j) {
       Vec3b& rgb = img_aug.at<Vec3b>(i, j);
       transformed_data[0*offset + i*img_aug.cols + j] = (rgb[0] - 128)/256.0;
       transformed_data[1*offset + i*img_aug.cols + j] = (rgb[1] - 128)/256.0;
       transformed_data[2*offset + i*img_aug.cols + j] = (rgb[2] - 128)/256.0;
-      transformed_data[3*offset + i*img_aug.cols + j] = 0; //zero 4-th channel
     }
   }
   
-  putGaussianMaps(transformed_data + 3*offset, meta.objpos, 1, img_aug.cols, img_aug.rows, param_.sigma_center());
+  // label size is image size/ stride
+  for (int g_y = 0; g_y < grid_y; g_y++){
+    for (int g_x = 0; g_x < grid_x; g_x++){
+      for (int i = 0; i < np; i++){
+        // To do
+        // if (mode = 4){
+        //   transformed_label[i*channelOffset + g_y*grid_x + g_x] = 1;
+        // }
+        if(mode > 4){
+          float weight = float(mask_miss_aug.at<uchar>(g_y, g_x)) /255; //mask_miss_aug.at<uchar>(i, j); 
+          if (meta.joint_self.isVisible[i] != 3){
+            transformed_label[i*channelOffset + g_y*grid_x + g_x] = weight;
+          }
+          else{
+            transformed_label[i*channelOffset + g_y*grid_x + g_x] = 0;
+          }
+        }
+      }  
+      // background channel
+      //To do: if (mode = 4){
+      if(mode == 4){
+        transformed_label[np*channelOffset + g_y*grid_x + g_x] = float(mask_miss_aug.at<uchar>(g_y, g_x)) /255;
+      }
+      if(mode > 5){
+        transformed_label[np*channelOffset + g_y*grid_x + g_x] = 1;
+        transformed_label[(2*np+1)*channelOffset + g_y*grid_x + g_x] = float(mask_all_aug.at<uchar>(g_y, g_x)) /255;
+      }
+    }
+  }
+
+  //putGaussianMaps(transformed_data + 3*offset, meta.objpos, 1, img_aug.cols, img_aug.rows, param_.sigma_center());
   //LOG(INFO) << "image transformation done!";
   generateLabelMap(transformed_label, img_aug, meta);
 
@@ -521,6 +1028,192 @@ template<typename Dtype> void DataTransformer<Dtype>::Transform_nv(const Datum& 
     //dumpEverything(transformed_data, transformed_label, meta);
   //}
 }
+
+
+// include mask_miss
+template<typename Dtype>
+float DataTransformer<Dtype>::augmentation_scale(Mat& img_src, Mat& img_temp, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode) {
+  float dice = static_cast <float> (rand()) / static_cast <float> (RAND_MAX); //[0,1]
+  float scale_multiplier;
+  //float scale = (param_.scale_max() - param_.scale_min()) * dice + param_.scale_min(); //linear shear into [scale_min, scale_max]
+  if(dice > param_.scale_prob()) {
+    img_temp = img_src.clone();
+    scale_multiplier = 1;
+  }
+  else {
+    float dice2 = static_cast <float> (rand()) / static_cast <float> (RAND_MAX); //[0,1]
+    scale_multiplier = (param_.scale_max() - param_.scale_min()) * dice2 + param_.scale_min(); //linear shear into [scale_min, scale_max]
+  }
+  float scale_abs = param_.target_dist()/meta.scale_self;
+  float scale = scale_abs * scale_multiplier;
+  resize(img_src, img_temp, Size(), scale, scale, INTER_CUBIC);
+  if(mode>4){
+    resize(mask_miss, mask_miss, Size(), scale, scale, INTER_CUBIC);
+  }
+  if(mode>5){
+    resize(mask_all, mask_all, Size(), scale, scale, INTER_CUBIC);
+  }
+
+  //modify meta data
+  meta.objpos *= scale;
+  for(int i=0; i<np; i++){
+    meta.joint_self.joints[i] *= scale;
+  }
+  for(int p=0; p<meta.numOtherPeople; p++){
+    meta.objpos_other[p] *= scale;
+    for(int i=0; i<np; i++){
+      meta.joint_others[p].joints[i] *= scale;
+    }
+  }
+  return scale_multiplier;
+}
+
+template<typename Dtype>
+Size DataTransformer<Dtype>::augmentation_croppad(Mat& img_src, Mat& img_dst, Mat& mask_miss, Mat& mask_miss_aug, Mat& mask_all, Mat& mask_all_aug, MetaData& meta, int mode) {
+  float dice_x = static_cast <float> (rand()) / static_cast <float> (RAND_MAX); //[0,1]
+  float dice_y = static_cast <float> (rand()) / static_cast <float> (RAND_MAX); //[0,1]
+  int crop_x = param_.crop_size_x();
+  int crop_y = param_.crop_size_y();
+
+  float x_offset = int((dice_x - 0.5) * 2 * param_.center_perterb_max());
+  float y_offset = int((dice_y - 0.5) * 2 * param_.center_perterb_max());
+
+  //LOG(INFO) << "Size of img_temp is " << img_temp.cols << " " << img_temp.rows;
+  //LOG(INFO) << "ROI is " << x_offset << " " << y_offset << " " << min(800, img_temp.cols) << " " << min(256, img_temp.rows);
+  Point2i center = meta.objpos + Point2f(x_offset, y_offset);
+  int offset_left = -(center.x - (crop_x/2));
+  int offset_up = -(center.y - (crop_y/2));
+  // int to_pad_right = max(center.x + (crop_x - crop_x/2) - img_src.cols, 0);
+  // int to_pad_down = max(center.y + (crop_y - crop_y/2) - img_src.rows, 0);
+  
+  img_dst = Mat::zeros(crop_y, crop_x, CV_8UC3) + Scalar(128,128,128);
+  mask_miss_aug = Mat::zeros(crop_y, crop_x, CV_8UC1) + Scalar(255); //Scalar(1);
+  mask_all_aug = Mat::zeros(crop_y, crop_x, CV_8UC1);
+  for(int i=0;i<crop_y;i++){
+    for(int j=0;j<crop_x;j++){ //i,j on cropped
+      int coord_x_on_img = center.x - crop_x/2 + j;
+      int coord_y_on_img = center.y - crop_y/2 + i;
+      if(onPlane(Point(coord_x_on_img, coord_y_on_img), Size(img_src.cols, img_src.rows))){
+        img_dst.at<Vec3b>(i,j) = img_src.at<Vec3b>(coord_y_on_img, coord_x_on_img);
+        if(mode>4){
+          mask_miss_aug.at<uchar>(i,j) = mask_miss.at<uchar>(coord_y_on_img, coord_x_on_img);
+        }
+        if(mode>5){
+          mask_all_aug.at<uchar>(i,j) = mask_all.at<uchar>(coord_y_on_img, coord_x_on_img);
+        }
+      }
+    }
+  }
+
+  //modify meta data
+  Point2f offset(offset_left, offset_up);
+  meta.objpos += offset;
+  for(int i=0; i<np; i++){
+    meta.joint_self.joints[i] += offset;
+  }
+  for(int p=0; p<meta.numOtherPeople; p++){
+    meta.objpos_other[p] += offset;
+    for(int i=0; i<np; i++){
+      meta.joint_others[p].joints[i] += offset;
+    }
+  }
+
+  return Size(x_offset, y_offset);
+}
+
+template<typename Dtype>
+bool DataTransformer<Dtype>::augmentation_flip(Mat& img_src, Mat& img_aug, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode) {
+  bool doflip;
+  if(param_.aug_way() == "rand"){
+    float dice = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+    doflip = (dice <= param_.flip_prob());
+  }
+  else if(param_.aug_way() == "table"){
+    doflip = (aug_flips[meta.write_number][meta.epoch % param_.num_total_augs()] == 1);
+  }
+  else {
+    doflip = 0;
+    LOG(INFO) << "Unhandled exception!!!!!!";
+  }
+
+  if(doflip){
+    flip(img_src, img_aug, 1);
+    int w = img_src.cols;
+    if(mode>4){
+      flip(mask_miss, mask_miss, 1);
+    }
+    if(mode>5){
+      flip(mask_all, mask_all, 1);
+    }
+    meta.objpos.x = w - 1 - meta.objpos.x;
+    for(int i=0; i<np; i++){
+      meta.joint_self.joints[i].x = w - 1 - meta.joint_self.joints[i].x;
+    }
+    if(param_.transform_body_joint())
+      swapLeftRight(meta.joint_self);
+
+    for(int p=0; p<meta.numOtherPeople; p++){
+      meta.objpos_other[p].x = w - 1 - meta.objpos_other[p].x;
+      for(int i=0; i<np; i++){
+        meta.joint_others[p].joints[i].x = w - 1 - meta.joint_others[p].joints[i].x;
+      }
+      if(param_.transform_body_joint())
+        swapLeftRight(meta.joint_others[p]);
+    }
+  }
+  else {
+    img_aug = img_src.clone();
+  }
+  return doflip;
+}
+
+template<typename Dtype>
+float DataTransformer<Dtype>::augmentation_rotate(Mat& img_src, Mat& img_dst, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode) {
+  
+  float degree;
+  if(param_.aug_way() == "rand"){
+    float dice = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+    degree = (dice - 0.5) * 2 * param_.max_rotate_degree();
+  }
+  else if(param_.aug_way() == "table"){
+    degree = aug_degs[meta.write_number][meta.epoch % param_.num_total_augs()];
+  }
+  else {
+    degree = 0;
+    LOG(INFO) << "Unhandled exception!!!!!!";
+  }
+  
+  Point2f center(img_src.cols/2.0, img_src.rows/2.0);
+  Mat R = getRotationMatrix2D(center, degree, 1.0);
+  Rect bbox = RotatedRect(center, img_src.size(), degree).boundingRect();
+  // adjust transformation matrix
+  R.at<double>(0,2) += bbox.width/2.0 - center.x;
+  R.at<double>(1,2) += bbox.height/2.0 - center.y;
+  //LOG(INFO) << "R=[" << R.at<double>(0,0) << " " << R.at<double>(0,1) << " " << R.at<double>(0,2) << ";" 
+  //          << R.at<double>(1,0) << " " << R.at<double>(1,1) << " " << R.at<double>(1,2) << "]";
+  warpAffine(img_src, img_dst, R, bbox.size(), INTER_CUBIC, BORDER_CONSTANT, Scalar(128,128,128));
+  if(mode >4){
+    warpAffine(mask_miss, mask_miss, R, bbox.size(), INTER_CUBIC, BORDER_CONSTANT, Scalar(255)); //Scalar(1));
+  }
+  if(mode >5){
+    warpAffine(mask_all, mask_all, R, bbox.size(), INTER_CUBIC, BORDER_CONSTANT, Scalar(0));
+  }
+
+  //adjust meta data
+  RotatePoint(meta.objpos, R);
+  for(int i=0; i<np; i++){
+    RotatePoint(meta.joint_self.joints[i], R);
+  }
+  for(int p=0; p<meta.numOtherPeople; p++){
+    RotatePoint(meta.objpos_other[p], R);
+    for(int i=0; i<np; i++){
+      RotatePoint(meta.joint_others[p].joints[i], R);
+    }
+  }
+  return degree;
+}
+// end here
+
 
 template<typename Dtype>
 float DataTransformer<Dtype>::augmentation_scale(Mat& img_src, Mat& img_temp, MetaData& meta) {
@@ -606,7 +1299,7 @@ Size DataTransformer<Dtype>::augmentation_croppad(Mat& img_src, Mat& img_dst, Me
 
 template<typename Dtype>
 void DataTransformer<Dtype>::swapLeftRight(Joints& j) {
-  assert(j.joints.size() == 9 && j.joints.size() == 14 && j.isVisible.size() == 28);
+  //assert(j.joints.size() == 9 && j.joints.size() == 14 && j.isVisible.size() == 27 && j.isVisible.size() == 28 && j.isVisible.size() == 29 && j.isVisible.size() == 33 && j.isVisible.size() == 34 && j.isVisible.size() == 43);
   //MPII R leg: 0(ankle), 1(knee), 2(hip)
   //     L leg: 5(ankle), 4(knee), 3(hip)
   //     R arms: 10(wrist), 11(elbow), 12(shoulder)
@@ -639,10 +1332,167 @@ void DataTransformer<Dtype>::swapLeftRight(Joints& j) {
       j.isVisible[li] = temp_v;
     }
   }
+  else if(np == 27){
+    int right[12] = {3,4,5,9,10,11,15,18,19,20,24,25}; //1-index
+    int left[12] = {6,7,8,12,13,14,16,21,22,23,26,27}; //1-index
+    for(int i=0; i<12; i++){
+      int ri = right[i] - 1;
+      int li = left[i] - 1;
+      Point2f temp = j.joints[ri];
+      j.joints[ri] = j.joints[li];
+      j.joints[li] = temp;
+      int temp_v = j.isVisible[ri];
+      j.isVisible[ri] = j.isVisible[li];
+      j.isVisible[li] = temp_v;
+    }
+  }
   else if(np == 28){
     int right[11] = {3,4,5,9,10,11,18,19,20,24,25}; //1-index
     int left[11] = {6,7,8,12,13,14,21,22,23,26,27}; //1-index
-    for(int i=0; i<6; i++){
+    for(int i=0; i<11; i++){
+      int ri = right[i] - 1;
+      int li = left[i] - 1;
+      Point2f temp = j.joints[ri];
+      j.joints[ri] = j.joints[li];
+      j.joints[li] = temp;
+      int temp_v = j.isVisible[ri];
+      j.isVisible[ri] = j.isVisible[li];
+      j.isVisible[li] = temp_v;
+    }
+  }
+  else if(np == 29){
+    int right[12] = {3,4,5,9,10,11,15,18,19,20,24,25}; 
+    int left[12] = {6,7,8,12,13,14,16,21,22,23,26,27}; 
+    for(int i=0; i<12; i++){   
+      int ri = right[i] - 1;
+      int li = left[i] - 1;
+      Point2f temp = j.joints[ri];
+      j.joints[ri] = j.joints[li];
+      j.joints[li] = temp;
+      int temp_v = j.isVisible[ri];
+      j.isVisible[ri] = j.isVisible[li];
+      j.isVisible[li] = temp_v;
+    }
+  }
+  else if(np == 33){
+    int right[15] = {3,4,5, 9,10,11,15,17,20,21,22,26,27,30,32}; 
+    int left[15] =  {6,7,8,12,13,14,16,18,23,24,25,28,29,31,33}; 
+    for(int i=0; i<15; i++){   
+      int ri = right[i] - 1;
+      int li = left[i] - 1;
+      Point2f temp = j.joints[ri];
+      j.joints[ri] = j.joints[li];
+      j.joints[li] = temp;
+      int temp_v = j.isVisible[ri];
+      j.isVisible[ri] = j.isVisible[li];
+      j.isVisible[li] = temp_v;
+    }
+  }
+  else if(np == 34){
+    int right[14] = {3,4,5, 9,10,11,15,17,20,21,22,26,27,32}; 
+    int left[14] =  {6,7,8,12,13,14,16,18,23,24,25,28,29,33}; 
+    for(int i=0; i<14; i++){   
+      int ri = right[i] - 1;
+      int li = left[i] - 1;
+      Point2f temp = j.joints[ri];
+      j.joints[ri] = j.joints[li];
+      j.joints[li] = temp;
+      int temp_v = j.isVisible[ri];
+      j.isVisible[ri] = j.isVisible[li];
+      j.isVisible[li] = temp_v;
+    }
+  }
+  else if(np == 36){
+    int right[16] = {1,3,5,7,10,11,12,13,14,15,23,24,25,26,32,33}; 
+    int left[16] =  {2,4,6,8,17,16,19,18,21,20,28,27,30,29,35,34}; 
+    for(int i=0; i<16; i++){   
+      int ri = right[i] - 1;
+      int li = left[i] - 1;
+      Point2f temp = j.joints[ri];
+      j.joints[ri] = j.joints[li];
+      j.joints[li] = temp;
+      int temp_v = j.isVisible[ri];
+      j.isVisible[ri] = j.isVisible[li];
+      j.isVisible[li] = temp_v;
+    }
+  }
+  else if(np == 37){
+    int right[8] = {3,4,5, 9,10,11,15,17}; 
+    int left[8] =  {6,7,8,12,13,14,16,18}; 
+    for(int i=0; i<8; i++){   
+      int ri = right[i] - 1;
+      int li = left[i] - 1;
+      Point2f temp = j.joints[ri];
+      j.joints[ri] = j.joints[li];
+      j.joints[li] = temp;
+      int temp_v = j.isVisible[ri];
+      j.isVisible[ri] = j.isVisible[li];
+      j.isVisible[li] = temp_v;
+    }
+  }
+  else if(np == 43){
+    int right[18] = {3,4,5,9,10,11,18,19,20,21,22,23,32,33,34,35,36,37}; 
+    int left[18] = {6,7,8,12,13,14,24,25,26,27,28,29,38,39,40,41,42,43}; 
+    for(int i=0; i<18; i++){   
+      int ri = right[i] - 1;
+      int li = left[i] - 1;
+      Point2f temp = j.joints[ri];
+      j.joints[ri] = j.joints[li];
+      j.joints[li] = temp;
+      int temp_v = j.isVisible[ri];
+      j.isVisible[ri] = j.isVisible[li];
+      j.isVisible[li] = temp_v;
+    }
+  }
+  else if(np == 52){
+    int right[24] = {3,4,5, 9,10,11,15,17,19,20,21,22,23,24,31,32,33,34,35,36,37,38,49,51}; 
+    int left[24] =  {6,7,8,12,13,14,16,18,25,26,27,28,29,30,39,40,41,42,43,44,45,46,50,52}; 
+    for(int i=0; i<24; i++){   
+      int ri = right[i] - 1;
+      int li = left[i] - 1;
+      Point2f temp = j.joints[ri];
+      j.joints[ri] = j.joints[li];
+      j.joints[li] = temp;
+      int temp_v = j.isVisible[ri];
+      j.isVisible[ri] = j.isVisible[li];
+      j.isVisible[li] = temp_v;
+    }
+  }
+  else if(np == 56){
+    //int right[26] = {3,4,5, 9,10,11,15,17,19,20,21,22,23,24,31,32,33,34,35,36,37,38,49,50,53,55}; 
+    //int left[26] =  {6,7,8,12,13,14,16,18,25,26,27,28,29,30,39,40,41,42,43,44,45,46,51,52,54,56}; 
+    //for(int i=0; i<26; i++){
+    int right[8] = {3,4,5, 9,10,11,15,17}; 
+    int left[8] =  {6,7,8,12,13,14,16,18}; 
+    for(int i=0; i<8; i++){    
+      int ri = right[i] - 1;
+      int li = left[i] - 1;
+      Point2f temp = j.joints[ri];
+      j.joints[ri] = j.joints[li];
+      j.joints[li] = temp;
+      int temp_v = j.isVisible[ri];
+      j.isVisible[ri] = j.isVisible[li];
+      j.isVisible[li] = temp_v;
+    }
+  }
+  else if(np == 75){
+    int right[35] = {3,4,5, 9,10,11,15,17,19,20,21,22,23,24,25,26,27,37,38,39,40,41,42,43,44,45,46,47,48,64,65,66,70,71,72}; 
+    int left[35] =  {6,7,8,12,13,14,16,18,28,29,30,31,32,33,34,35,36,49,50,51,52,53,54,55,56,57,58,59,60,67,68,69,73,74,75}; 
+    for(int i=0; i<35; i++){   
+      int ri = right[i] - 1;
+      int li = left[i] - 1;
+      Point2f temp = j.joints[ri];
+      j.joints[ri] = j.joints[li];
+      j.joints[li] = temp;
+      int temp_v = j.isVisible[ri];
+      j.isVisible[ri] = j.isVisible[li];
+      j.isVisible[li] = temp_v;
+    }
+  }
+  else if(np == 78){
+    int right[36] = {1,3,5,7, 9,11,14,15,16,17,18,19,20,21,22,23,35,36,37,38,39,40,41,42,52,53,54,55,56,57,65,66,67,68,74,75}; 
+    int left[36] =  {2,4,6,8,10,12,25,24,27,26,29,28,31,30,33,32,44,43,46,45,48,47,50,49,59,58,61,60,63,62,70,69,72,71,77,76}; 
+    for(int i=0; i<36; i++){   
       int ri = right[i] - 1;
       int li = left[i] - 1;
       Point2f temp = j.joints[ri];
@@ -768,6 +1618,102 @@ void DataTransformer<Dtype>::putGaussianMaps(Dtype* entry, Point2f center, int s
 }
 
 template<typename Dtype>
+void DataTransformer<Dtype>::putVecPeaks(Dtype* entryX, Dtype* entryY, Mat& count, Point2f centerA, Point2f centerB, int stride, int grid_x, int grid_y, float sigma, int thre){
+  //int thre = 4;
+  centerB = centerB*0.125;
+  centerA = centerA*0.125;
+  Point2f bc = centerB - centerA;
+  float norm_bc = sqrt(bc.x*bc.x + bc.y*bc.y);
+  bc.x = bc.x /norm_bc;
+  bc.y = bc.y /norm_bc;
+
+  for(int j=0;j<3;j++){
+    //Point2f center = centerB*0.5 + centerA*0.5;
+    Point2f center = centerB*0.5*j + centerA*0.5*(2-j);
+
+    int min_x = std::max( int(floor(center.x-thre)), 0);
+    int max_x = std::min( int(ceil(center.x+thre)), grid_x);
+
+    int min_y = std::max( int(floor(center.y-thre)), 0);
+    int max_y = std::min( int(ceil(center.y+thre)), grid_y);
+
+    for (int g_y = min_y; g_y < max_y; g_y++){
+      for (int g_x = min_x; g_x < max_x; g_x++){
+        float dist = (g_x-center.x)*(g_x-center.x) + (g_y-center.y)*(g_y-center.y);
+        if(dist <= thre){
+          int cnt = count.at<uchar>(g_y, g_x);
+          //LOG(INFO) << "putVecMaps here we start for " << g_x << " " << g_y;
+          if (cnt == 0){
+            entryX[g_y*grid_x + g_x] = bc.x;
+            entryY[g_y*grid_x + g_x] = bc.y;
+          }
+          else{
+            entryX[g_y*grid_x + g_x] = (entryX[g_y*grid_x + g_x]*cnt + bc.x) / (cnt + 1);
+            entryY[g_y*grid_x + g_x] = (entryY[g_y*grid_x + g_x]*cnt + bc.y) / (cnt + 1);
+            count.at<uchar>(g_y, g_x) = cnt + 1;
+          }
+        }
+      }
+    }
+  }
+}
+
+
+template<typename Dtype>
+void DataTransformer<Dtype>::putVecMaps(Dtype* entryX, Dtype* entryY, Mat& count, Point2f centerA, Point2f centerB, int stride, int grid_x, int grid_y, float sigma, int thre){
+  //int thre = 4;
+  centerB = centerB*0.125;
+  centerA = centerA*0.125;
+  Point2f bc = centerB - centerA;
+  int min_x = std::max( int(round(std::min(centerA.x, centerB.x)-thre)), 0);
+  int max_x = std::min( int(round(std::max(centerA.x, centerB.x)+thre)), grid_x);
+
+  int min_y = std::max( int(round(std::min(centerA.y, centerB.y)-thre)), 0);
+  int max_y = std::min( int(round(std::max(centerA.y, centerB.y)+thre)), grid_y);
+
+  float norm_bc = sqrt(bc.x*bc.x + bc.y*bc.y);
+  bc.x = bc.x /norm_bc;
+  bc.y = bc.y /norm_bc;
+
+  // float x_p = (centerA.x + centerB.x) / 2;
+  // float y_p = (centerA.y + centerB.y) / 2;
+  // float angle = atan2f(centerB.y - centerA.y, centerB.x - centerA.x);
+  // float sine = sinf(angle);
+  // float cosine = cosf(angle);
+  // float a_sqrt = (centerA.x - x_p) * (centerA.x - x_p) + (centerA.y - y_p) * (centerA.y - y_p);
+  // float b_sqrt = 10; //fixed
+
+  for (int g_y = min_y; g_y < max_y; g_y++){
+    for (int g_x = min_x; g_x < max_x; g_x++){
+      Point2f ba;
+      ba.x = g_x - centerA.x;
+      ba.y = g_y - centerA.y;
+      float dist = std::abs(ba.x*bc.y -ba.y*bc.x);
+
+      // float A = cosine * (g_x - x_p) + sine * (g_y - y_p);
+      // float B = sine * (g_x - x_p) - cosine * (g_y - y_p);
+      // float judge = A * A / a_sqrt + B * B / b_sqrt;
+
+      if(dist <= thre){
+      //if(judge <= 1){
+        int cnt = count.at<uchar>(g_y, g_x);
+        //LOG(INFO) << "putVecMaps here we start for " << g_x << " " << g_y;
+        if (cnt == 0){
+          entryX[g_y*grid_x + g_x] = bc.x;
+          entryY[g_y*grid_x + g_x] = bc.y;
+        }
+        else{
+          entryX[g_y*grid_x + g_x] = (entryX[g_y*grid_x + g_x]*cnt + bc.x) / (cnt + 1);
+          entryY[g_y*grid_x + g_x] = (entryY[g_y*grid_x + g_x]*cnt + bc.y) / (cnt + 1);
+          count.at<uchar>(g_y, g_x) = cnt + 1;
+        }
+      }
+
+    }
+  }
+}
+
+template<typename Dtype>
 void DataTransformer<Dtype>::generateLabelMap(Dtype* transformed_label, Mat& img_aug, MetaData meta) {
   int rezX = img_aug.cols;
   int rezY = img_aug.rows;
@@ -775,54 +1721,188 @@ void DataTransformer<Dtype>::generateLabelMap(Dtype* transformed_label, Mat& img
   int grid_x = rezX / stride;
   int grid_y = rezY / stride;
   int channelOffset = grid_y * grid_x;
+  int mode = 6; // TO DO: make this as a parameter
 
+  // TO DO: in transform_nv, generate the weight Map for MPI images
   // clear out transformed_label, it may remain things for last batch
+  // for (int g_y = 0; g_y < grid_y; g_y++){
+  //   for (int g_x = 0; g_x < grid_x; g_x++){
+  //     for (int i = 0; i < np; i++){
+  //       if (meta.joint_self.isVisible[i] == 3){
+  //         transformed_label[i*channelOffset + g_y*grid_x + g_x] = 0;
+  //       }
+  //       else{
+  //         transformed_label[i*channelOffset + g_y*grid_x + g_x] = 1;
+  //       }
+  //     }
+  //     //background channel weight map
+  //     if (meta.joint_self.isVisible[0] == 3){
+  //       transformed_label[np*channelOffset + g_y*grid_x + g_x] = 0;
+  //     }
+  //     else{
+  //       transformed_label[np*channelOffset + g_y*grid_x + g_x] = 1;
+  //     }
+  //   }
+  // }
+
   for (int g_y = 0; g_y < grid_y; g_y++){
     for (int g_x = 0; g_x < grid_x; g_x++){
-      for (int i = 0; i < 2*(np+1); i++){
+      for (int i = np+1; i < 2*(np+1); i++){
+        if (mode == 6 && i == (2*np + 1))
+          continue;
         transformed_label[i*channelOffset + g_y*grid_x + g_x] = 0;
       }
     }
   }
+
   //LOG(INFO) << "label cleaned";
-  
-  for (int i = 0; i < np; i++){
-    //LOG(INFO) << i << meta.numOtherPeople;
-    Point2f center = meta.joint_self.joints[i];
-    if(meta.joint_self.isVisible[i] <= 1){
-      putGaussianMaps(transformed_label + i*channelOffset, center, param_.stride(), 
-                      grid_x, grid_y, param_.sigma()); //self
-      putGaussianMaps(transformed_label + (i+np+1)*channelOffset, center, param_.stride(), 
-                      grid_x, grid_y, param_.sigma()); //self
-    }
-    //LOG(INFO) << "label put for" << i;
-    //plot others
-    for(int j = 0; j < meta.numOtherPeople; j++){ //for every other person
-      Point2f center = meta.joint_others[j].joints[i];
-      if(meta.joint_others[j].isVisible[i] <= 1){
+
+  if (np == 37){
+    for (int i = 0; i < 18; i++){
+      Point2f center = meta.joint_self.joints[i];
+      if(meta.joint_self.isVisible[i] <= 1){
         putGaussianMaps(transformed_label + (i+np+1)*channelOffset, center, param_.stride(), 
-                        grid_x, grid_y, param_.sigma());
+                        grid_x, grid_y, param_.sigma()); //self
+      }
+      for(int j = 0; j < meta.numOtherPeople; j++){ //for every other person
+        Point2f center = meta.joint_others[j].joints[i];
+        if(meta.joint_others[j].isVisible[i] <= 1){
+          putGaussianMaps(transformed_label + (i+np+1)*channelOffset, center, param_.stride(), 
+                          grid_x, grid_y, param_.sigma());
+        }
       }
     }
-  }
-  
-  //put background channel
-  for (int g_y = 0; g_y < grid_y; g_y++){
-    for (int g_x = 0; g_x < grid_x; g_x++){
-      float maximum = 0;
-      for (int i = 0; i < np; i++){
-        maximum = (maximum > transformed_label[i*channelOffset + g_y*grid_x + g_x]) ? maximum : transformed_label[i*channelOffset + g_y*grid_x + g_x];
+
+    int mid_1[19] = {2, 9,  10, 2,  12, 13, 2, 3, 4, 3,  2, 6, 7, 6,  2, 1,  1,  15, 16};
+    int mid_2[19] = {9, 10, 11, 12, 13, 14, 3, 4, 5, 17, 6, 7, 8, 18, 1, 15, 16, 17, 18};
+
+    for(int i=0;i<19;i++){
+      for (int j=1;j<=3;j++){
+        Joints jo = meta.joint_self;
+        if(jo.isVisible[mid_1[i]-1]<=1 && jo.isVisible[mid_2[i]-1]<=1){
+          Point2f center = jo.joints[mid_1[i]-1]*(1-j*0.25) + jo.joints[mid_2[i]-1]*j*0.25;
+          putGaussianMaps(transformed_label + (np+19+i)*channelOffset, center, param_.stride(), 
+                        grid_x, grid_y, param_.sigma()); //self
+        }
+
+        for(int j = 0; j < meta.numOtherPeople; j++){ //for every other person
+          Joints jo2 = meta.joint_others[j];
+          if(jo2.isVisible[mid_1[i]-1]<=1 && jo2.isVisible[mid_2[i]-1]<=1){
+            Point2f center = jo2.joints[mid_1[i]-1]*(1-j*0.25) + jo2.joints[mid_2[i]-1]*j*0.25;
+            putGaussianMaps(transformed_label + (np+19+i)*channelOffset, center, param_.stride(), 
+                            grid_x, grid_y, param_.sigma());
+          }
+        }
       }
-      transformed_label[np*channelOffset + g_y*grid_x + g_x] = max(1.0-maximum, 0.0);
-      //second background channel
-      maximum = 0;
-      for (int i = np+1; i < 2*np+1; i++){
-        maximum = (maximum > transformed_label[i*channelOffset + g_y*grid_x + g_x]) ? maximum : transformed_label[i*channelOffset + g_y*grid_x + g_x];
-      }
-      transformed_label[(2*np+1)*channelOffset + g_y*grid_x + g_x] = max(1.0-maximum, 0.0);
     }
+
+    //put background channel
+    for (int g_y = 0; g_y < grid_y; g_y++){
+      for (int g_x = 0; g_x < grid_x; g_x++){
+        float maximum = 0;
+        //second background channel
+        for (int i = np+1; i < 2*np+1; i++){
+          maximum = (maximum > transformed_label[i*channelOffset + g_y*grid_x + g_x]) ? maximum : transformed_label[i*channelOffset + g_y*grid_x + g_x];
+        }
+        transformed_label[(2*np+1)*channelOffset + g_y*grid_x + g_x] = max(1.0-maximum, 0.0);
+      }
+    }
+    //LOG(INFO) << "background put";
   }
-  //LOG(INFO) << "background put";
+  else if (np == 56){
+    for (int i = 0; i < 18; i++){
+      Point2f center = meta.joint_self.joints[i];
+      if(meta.joint_self.isVisible[i] <= 1){
+        putGaussianMaps(transformed_label + (i+np+39)*channelOffset, center, param_.stride(), 
+                        grid_x, grid_y, param_.sigma()); //self
+      }
+      for(int j = 0; j < meta.numOtherPeople; j++){ //for every other person
+        Point2f center = meta.joint_others[j].joints[i];
+        if(meta.joint_others[j].isVisible[i] <= 1){
+          putGaussianMaps(transformed_label + (i+np+39)*channelOffset, center, param_.stride(), 
+                          grid_x, grid_y, param_.sigma());
+        }
+      }
+    }
+
+    int mid_1[19] = {2, 9,  10, 2,  12, 13, 2, 3, 4, 3,  2, 6, 7, 6,  2, 1,  1,  15, 16};
+    int mid_2[19] = {9, 10, 11, 12, 13, 14, 3, 4, 5, 17, 6, 7, 8, 18, 1, 15, 16, 17, 18};
+    int thre = 1;
+
+    for(int i=0;i<19;i++){
+      // if (i>14){
+      //   thre = 1;
+      // }
+      Mat count = Mat::zeros(grid_y, grid_x, CV_8UC1);
+      Joints jo = meta.joint_self;
+      if(jo.isVisible[mid_1[i]-1]<=1 && jo.isVisible[mid_2[i]-1]<=1){
+        //putVecPeaks
+        putVecMaps(transformed_label + (np+ 1+ 2*i)*channelOffset, transformed_label + (np+ 2+ 2*i)*channelOffset, 
+                  count, jo.joints[mid_1[i]-1], jo.joints[mid_2[i]-1], param_.stride(), grid_x, grid_y, param_.sigma(), thre); //self
+      }
+
+      for(int j = 0; j < meta.numOtherPeople; j++){ //for every other person
+        Joints jo2 = meta.joint_others[j];
+        if(jo2.isVisible[mid_1[i]-1]<=1 && jo2.isVisible[mid_2[i]-1]<=1){
+          //putVecPeaks
+          putVecMaps(transformed_label + (np+ 1+ 2*i)*channelOffset, transformed_label + (np+ 2+ 2*i)*channelOffset, 
+                  count, jo2.joints[mid_1[i]-1], jo2.joints[mid_2[i]-1], param_.stride(), grid_x, grid_y, param_.sigma(), thre); //self
+        }
+      }
+    }
+
+    //put background channel
+    for (int g_y = 0; g_y < grid_y; g_y++){
+      for (int g_x = 0; g_x < grid_x; g_x++){
+        float maximum = 0;
+        //second background channel
+        for (int i = np+39; i < np+57; i++){
+          maximum = (maximum > transformed_label[i*channelOffset + g_y*grid_x + g_x]) ? maximum : transformed_label[i*channelOffset + g_y*grid_x + g_x];
+        }
+        transformed_label[(2*np+1)*channelOffset + g_y*grid_x + g_x] = max(1.0-maximum, 0.0);
+      }
+    }
+    //LOG(INFO) << "background put";
+  }
+  else{
+    for (int i = 0; i < np; i++){
+      //LOG(INFO) << i << meta.numOtherPeople;
+      Point2f center = meta.joint_self.joints[i];
+      if(meta.joint_self.isVisible[i] <= 1){
+        putGaussianMaps(transformed_label + (i+np+1)*channelOffset, center, param_.stride(), 
+                        grid_x, grid_y, param_.sigma()); //self
+      }
+      //LOG(INFO) << "label put for" << i;
+      //plot others
+      for(int j = 0; j < meta.numOtherPeople; j++){ //for every other person
+        Point2f center = meta.joint_others[j].joints[i];
+        if(meta.joint_others[j].isVisible[i] <= 1){
+          putGaussianMaps(transformed_label + (i+np+1)*channelOffset, center, param_.stride(), 
+                          grid_x, grid_y, param_.sigma());
+        }
+      }
+    }
+
+    //put background channel
+    if (mode != 6){ // mode = 6, use the mask_all as the background
+      for (int g_y = 0; g_y < grid_y; g_y++){
+        for (int g_x = 0; g_x < grid_x; g_x++){
+          if (meta.joint_self.isVisible[0] == 3){
+            transformed_label[(2*np+1)*channelOffset + g_y*grid_x + g_x] = 0;
+          }
+          else{
+            float maximum = 0;
+            //second background channel
+            for (int i = np+1; i < 2*np+1; i++){
+              maximum = (maximum > transformed_label[i*channelOffset + g_y*grid_x + g_x]) ? maximum : transformed_label[i*channelOffset + g_y*grid_x + g_x];
+            }
+            transformed_label[(2*np+1)*channelOffset + g_y*grid_x + g_x] = maximum; //max(1.0-maximum, 0.0);
+          }
+        }
+      }
+    }
+    //LOG(INFO) << "background put";
+  }
 
   //visualize
   if(1 && param_.visualize()){
@@ -953,6 +2033,10 @@ void DataTransformer<Dtype>::visualize(Mat& img, MetaData meta, AugmentSelection
           circle(img_vis, meta.joint_self.joints[i], 3, CV_RGB(255,200,200), -1);
       }
     }
+    else {
+      if(meta.joint_self.isVisible[i] <= 1)
+        circle(img_vis, meta.joint_self.joints[i], 3, CV_RGB(200,200,255), -1);
+    }
   }
   
   line(img_vis, meta.objpos+Point2f(-368/2,-368/2), meta.objpos+Point2f(368/2,-368/2), CV_RGB(0,255,0), 2);
@@ -963,8 +2047,8 @@ void DataTransformer<Dtype>::visualize(Mat& img, MetaData meta, AugmentSelection
   for(int p=0;p<meta.numOtherPeople;p++){
     rectangle(img_vis, meta.objpos_other[p]-Point2f(3,3), meta.objpos_other[p]+Point2f(3,3), CV_RGB(0,255,255), CV_FILLED);
     for(int i=0;i<np;i++){
-      // if(meta.joint_others[p].isVisible[i])
-      //   circle(img_vis, meta.joint_others[p].joints[i], 3, CV_RGB(0,0,255), -1);
+      if(meta.joint_others[p].isVisible[i] <= 1)
+        circle(img_vis, meta.joint_others[p].joints[i], 3, CV_RGB(0,0,255), -1);
       // else
       //   circle(img_vis, meta.joint_others[p].joints[i], 3, CV_RGB(0,255,255), -1);
       
@@ -973,7 +2057,9 @@ void DataTransformer<Dtype>::visualize(Mat& img, MetaData meta, AugmentSelection
       //     R arms: 10(wrist), 11(elbow), 12(shoulder)
       //     L arms: 13(wrist), 14(elbow), 15(shoulder)
       //if(i==0 || i==1 || i==2 || i==10 || i==11 || i==12)
-      circle(img_vis, meta.joint_others[p].joints[i], 2, CV_RGB(0,0,0), -1);
+      
+      //circle(img_vis, meta.joint_others[p].joints[i], 2, CV_RGB(255,0,0), -1);
+      
       //else if(i==5 || i==4 || i==3 || i==13 || i==14 || i==15)
         //circle(img_vis, meta.joint_others[p].joints[i], 3, CV_RGB(0,255,255), -1);
       //else

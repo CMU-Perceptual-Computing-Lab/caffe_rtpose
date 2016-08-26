@@ -46,11 +46,12 @@ void CPMDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
   const int crop_size = this->layer_param_.transform_param().crop_size();
   const int batch_size = this->layer_param_.cpmdata_param().batch_size();
   if (crop_size > 0) {
-    top[0]->Reshape(batch_size, datum.channels(), crop_size, crop_size);
-    for (int i = 0; i < this->PREFETCH_COUNT; ++i) {
-      this->prefetch_[i].data_.Reshape(batch_size, datum.channels(), crop_size, crop_size);
-    }
-    this->transformed_data_.Reshape(1, datum.channels(), crop_size, crop_size);
+    // top[0]->Reshape(batch_size, datum.channels(), crop_size, crop_size);
+    // for (int i = 0; i < this->PREFETCH_COUNT; ++i) {
+    //   this->prefetch_[i].data_.Reshape(batch_size, datum.channels(), crop_size, crop_size);
+    // }
+    // //this->transformed_data_.Reshape(1, 4, crop_size, crop_size);
+    // this->transformed_data_.Reshape(1, 6, crop_size, crop_size);
   } 
   else {
     const int height = this->phase_ != TRAIN ? datum.height() :
@@ -62,7 +63,8 @@ void CPMDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
     for (int i = 0; i < this->PREFETCH_COUNT; ++i) {
       this->prefetch_[i].data_.Reshape(batch_size, datum.channels(), height, width);
     }
-    this->transformed_data_.Reshape(1, 4, height, width);
+    //this->transformed_data_.Reshape(1, 4, height, width);
+    this->transformed_data_.Reshape(1, datum.channels(), height, width);
   }
   LOG(INFO) << "output data size: " << top[0]->num() << ","
       << top[0]->channels() << "," << top[0]->height() << ","
@@ -132,6 +134,7 @@ void CPMDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
 
     timer.Start();
     cv::Mat cv_img;
+    //LOG(INFO) << "datum.encoded(): " << datum.encoded();
     if (datum.encoded()) {
       if (force_color) {
         cv_img = DecodeDatumToCVMat(datum, true);
@@ -156,6 +159,7 @@ void CPMDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
     if (datum.encoded()) {
       this->data_transformer_->Transform(cv_img, &(this->transformed_data_));
     } else {
+      //LOG(INFO) << "datum.channels(): " << datum.channels();
       this->data_transformer_->Transform_nv(datum, 
         &(this->transformed_data_),
         &(this->transformed_label_), cnt);

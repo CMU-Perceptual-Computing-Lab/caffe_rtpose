@@ -5,8 +5,8 @@
 
 #include <vector>
 
-#include "caffe/data_layers.hpp"
-#include "caffe/proto/caffe.pb.h"
+#include "caffe/data_transformer.hpp"
+#include "caffe/layers/data_layer.hpp"
 #include "caffe/util/benchmark.hpp"
 
 namespace caffe {
@@ -14,7 +14,7 @@ namespace caffe {
 template <typename Dtype>
 DataLayer<Dtype>::DataLayer(const LayerParameter& param)
   : BasePrefetchingDataLayer<Dtype>(param),
-    reader_(param, false) {
+    reader_(param) {
 }
 
 template <typename Dtype>

@@ -4,6 +4,23 @@
 #include <queue>
 #include <string>
 
+struct Frame {
+  float* data;
+  float* data_for_mat;
+  unsigned char* data_for_wrap;
+  double commit_time;
+  double preprocessed_time;
+  double gpu_fetched_time;
+  double gpu_computed_time;
+  double postprocesse_begin_time;
+  double postprocesse_end_time;
+  double buffer_start_time;
+  double buffer_end_time;
+  int index;
+  int numPeople;
+};
+
+
 namespace caffe {
 
 template<typename T>

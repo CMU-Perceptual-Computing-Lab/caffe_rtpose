@@ -1,7 +1,13 @@
 #include <boost/thread.hpp>
 #include <vector>
 
-#include "caffe/data_layers.hpp"
+#include "caffe/blob.hpp"
+#include "caffe/data_transformer.hpp"
+#include "caffe/internal_thread.hpp"
+#include "caffe/layer.hpp"
+#include "caffe/layers/base_data_layer.hpp"
+#include "caffe/proto/caffe.pb.h"
+#include "caffe/util/blocking_queue.hpp"
 
 namespace caffe {
 
@@ -62,9 +68,6 @@ void BasePrefetchingDataLayer<Dtype>::LayerSetUp(
 #endif
   DLOG(INFO) << "Initializing prefetch";
   this->data_transformer_->InitRand();
-  // static int iteration_internal = 0;
-  // LOG(INFO) << "-------------------------------------------------" << iteration_internal;
-  // iteration_internal++;
   StartInternalThread();
   DLOG(INFO) << "Prefetch initialized.";
 }
@@ -116,6 +119,12 @@ void BasePrefetchingDataLayer<Dtype>::Forward_cpu(
     // Copy the labels.
     caffe_copy(batch->label_.count(), batch->label_.cpu_data(),
         top[1]->mutable_cpu_data());
+
+    // masks
+    top[2]->ReshapeLike(batch->missing_part_mask_);
+    // Copy the labels.
+    caffe_copy(batch->missing_part_mask_.count(), batch->missing_part_mask_.cpu_data(),
+        top[2]->mutable_cpu_data());
   }
 
   prefetch_free_.push(batch);

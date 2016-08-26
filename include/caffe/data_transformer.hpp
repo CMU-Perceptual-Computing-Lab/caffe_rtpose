@@ -39,7 +39,10 @@ class DataTransformer {
    *    set_cpu_data() is used. See data_layer.cpp for an example.
    */
   void Transform(const Datum& datum, Blob<Dtype>* transformed_blob);
-  void Transform_nv(const Datum& datum, Blob<Dtype>* transformed_blob, Blob<Dtype>* transformed_label_blob, int cnt); //image and label
+  void Transform_CPM(const Datum& datum, Blob<Dtype>* transformed_blob, Blob<Dtype>* transformed_label_blob, Blob<Dtype>* mask, int cnt); //image and label
+  void Transform_COCO(const Datum& datum, Blob<Dtype>* transformed_blob, Blob<Dtype>* transformed_label_blob, Blob<Dtype>* mask, int cnt); //image and label
+  void Transform_cocobottomup(const Datum& datum, Blob<Dtype>* transformed_data, Blob<Dtype>* transformed_label, int cnt);
+  
   /**
    * @brief Applies the transformation defined in the data layer's
    * transform_param block to a vector of Datum.
@@ -130,6 +133,17 @@ class DataTransformer {
   vector<int> InferBlobShape(const cv::Mat& cv_img);
 #endif  // USE_OPENCV
 
+ protected:
+   /**
+   * @brief Generates a random integer from Uniform({0, 1, ..., n-1}).
+   *
+   * @param n
+   *    The upperbound (exclusive) value of the random number.
+   * @return
+   *    A uniformly random integer value from ({0, 1, ..., n-1}).
+   */
+  virtual int Rand(int n);
+
   struct AugmentSelection {
     bool flip;
     float degree;
@@ -142,7 +156,16 @@ class DataTransformer {
     vector<int> isVisible;
   };
 
+  struct Bbox {
+    float left;
+    float top;
+    float width;
+    float height;
+  };
+
   struct MetaData {
+    string type; //"cpm" or "detect"
+
     string dataset;
     Size img_size;
     bool isValidation;
@@ -155,29 +178,21 @@ class DataTransformer {
     Point2f objpos; //objpos_x(float), objpos_y (float)
     float scale_self;
     Joints joint_self; //(3*16)
+    bool has_teeth_mask;
 
     vector<Point2f> objpos_other; //length is numOtherPeople
     vector<float> scale_other; //length is numOtherPeople
     vector<Joints> joint_others; //length is numOtherPeople
+
+    // uniquely used by coco data (detect)
+    int numAnns;
+    int image_id_in_coco;
+    int image_id_in_training;
+    vector<int> num_keypoints;
+    vector<bool> iscrowd;
+    vector<Bbox> bboxes;
+    vector<Joints> annotations;
   };
-
-  void generateLabelMap(Dtype*, Mat&, MetaData meta);
-  void visualize(Mat& img, MetaData meta, AugmentSelection as);
-
-  bool augmentation_flip(Mat& img, Mat& img_aug, MetaData& meta);
-  float augmentation_rotate(Mat& img_src, Mat& img_aug, MetaData& meta);
-  float augmentation_scale(Mat& img, Mat& img_temp, MetaData& meta);
-  Size augmentation_croppad(Mat& img_temp, Mat& img_aug, MetaData& meta);
-
-  bool augmentation_flip(Mat& img, Mat& img_aug, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode);
-  float augmentation_rotate(Mat& img_src, Mat& img_aug, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode);
-  float augmentation_scale(Mat& img, Mat& img_temp, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode);
-  Size augmentation_croppad(Mat& img_temp, Mat& img_aug, Mat& mask_miss, Mat& mask_miss_aug, Mat& mask_all, Mat& mask_all_aug, MetaData& meta, int mode);
-
-  void RotatePoint(Point2f& p, Mat R);
-  bool onPlane(Point p, Size img_size);
-  void swapLeftRight(Joints& j);
-  void SetAugTable(int numData);
 
   int np_in_lmdb;
   int np;
@@ -185,27 +200,45 @@ class DataTransformer {
   vector<vector<float> > aug_degs;
   vector<vector<int> > aug_flips;
 
- protected:
-   /**
-   * @brief Generates a random integer from Uniform({0, 1, ..., n-1}).
-   *
-   * @param n
-   *    The upperbound (exclusive) value of the random number.
-   * @return
-   *    A uniformly random integer value from ({0, 1, ..., n-1}).
-   */
-  virtual int Rand(int n);
-
   void Transform(const Datum& datum, Dtype* transformed_data);
-  void Transform_nv(const Datum& datum, Dtype* transformed_data, Dtype* transformed_label, int cnt);
+  void Transform_CPM(const Datum& datum, Dtype* transformed_data, Dtype* transformed_label, Dtype* mask, int cnt);
+  void Transform_COCO(const Datum& datum, Dtype* transformed_data, Dtype* transformed_label, Dtype* mask, int cnt);
   void ReadMetaData(MetaData& meta, const string& data, size_t offset3, size_t offset1);
+  void ReadMetaData_COCO(MetaData& meta, const string& data, size_t offset3, size_t offset1);
   void TransformMetaJoints(MetaData& meta);
   void TransformJoints(Joints& joints);
   void clahe(Mat& img, int, int);
   void putGaussianMaps(Dtype* entry, Point2f center, int stride, int grid_x, int grid_y, float sigma);
+  void putGaussianMaps(Dtype* entry, Bbox b, int stride, int grid_x, int grid_y, float sigma_0);
+  void dumpEverything(Dtype* transformed_data, Dtype* transformed_label, MetaData);
+  void generateLabelMap(Dtype*, Mat&, MetaData meta, Dtype* mask, Mat&);
+  void visualize(Mat& img, MetaData meta, AugmentSelection as, Dtype* mask, Mat& teeth_mask);
+
+  int augmentation_flip(Mat& img, Mat& img_aug, MetaData& meta, int);
+  float augmentation_rotate(Mat& img_src, Mat& img_aug, MetaData& meta, float);
+  float augmentation_scale(Mat& img, Mat& img_temp, MetaData& meta, float);
+  Size augmentation_croppad(Mat& img_temp, Mat& img_aug, MetaData& meta, Size, bool);
+  void RotatePoint(Point2f& p, Mat R);
+  bool onPlane(Point p, Size img_size);
+  void swapLeftRight(Joints& j);
+  void SetAugTable(int numData);
+
+  //for cpmbottomup layer
+  void Transform_cocobottomup(const Datum& datum, Dtype* transformed_data, Dtype* transformed_label, int cnt);
+  void ReadMetaData_bottomup(MetaData& meta, const string& data, size_t offset3, size_t offset1);
+  //overloading for bottomup layer
+  bool augmentation_flip(Mat& img, Mat& img_aug, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode);
+  float augmentation_rotate(Mat& img_src, Mat& img_aug, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode);
+  float augmentation_scale(Mat& img, Mat& img_temp, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode);
+  Size augmentation_croppad(Mat& img_temp, Mat& img_aug, Mat& mask_miss, Mat& mask_miss_aug, Mat& mask_all, Mat& mask_all_aug, MetaData& meta, int mode);
+  void generateLabelMap(Dtype*, Mat&, MetaData meta);
+
   void putVecMaps(Dtype* entryX, Dtype* entryY, Mat& count, Point2f centerA, Point2f centerB, int stride, int grid_x, int grid_y, float sigma, int thre);
   void putVecPeaks(Dtype* entryX, Dtype* entryY, Mat& count, Point2f centerA, Point2f centerB, int stride, int grid_x, int grid_y, float sigma, int thre);
-  void dumpEverything(Dtype* transformed_data, Dtype* transformed_label, MetaData);
+
+  //utility
+  void DecodeFloats(const string& data, size_t idx, float* pf, size_t len);
+  string DecodeString(const string& data, size_t idx);
 
   // Tranformation parameters
   TransformationParameter param_;

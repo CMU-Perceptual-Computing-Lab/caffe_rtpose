@@ -1,8 +1,12 @@
 #include <boost/thread.hpp>
 #include <string>
+#include <utility> //for pair
 
-#include "caffe/data_layers.hpp"
 #include "caffe/data_reader.hpp"
+#include "caffe/cpmdata_reader.hpp"
+#include "caffe/cocodetect_data_reader.hpp"
+#include "caffe/cpmbottomup_data_reader.hpp"
+#include "caffe/layers/base_data_layer.hpp"
 #include "caffe/parallel.hpp"
 #include "caffe/util/blocking_queue.hpp"
 
@@ -90,7 +94,13 @@ template class BlockingQueue<Batch<float>*>;
 template class BlockingQueue<Batch<double>*>;
 template class BlockingQueue<Datum*>;
 template class BlockingQueue<shared_ptr<DataReader::QueuePair> >;
+template class BlockingQueue<shared_ptr<CPMDataReader::QueuePair> >;
+template class BlockingQueue<shared_ptr<CocoDetectDataReader::QueuePair> >;
+template class BlockingQueue<shared_ptr<CPMBottomUpDataReader::QueuePair> >;
 template class BlockingQueue<P2PSync<float>*>;
 template class BlockingQueue<P2PSync<double>*>;
+template class BlockingQueue<pair<int, string> >;
+template class BlockingQueue<pair<int, float*> >;
+template class BlockingQueue<Frame>;
 
 }  // namespace caffe

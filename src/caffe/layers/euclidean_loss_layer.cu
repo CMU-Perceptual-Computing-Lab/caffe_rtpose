@@ -1,6 +1,6 @@
 #include <vector>
 
-#include "caffe/loss_layers.hpp"
+#include "caffe/layers/euclidean_loss_layer.hpp"
 #include "caffe/util/math_functions.hpp"
 
 namespace caffe {
@@ -8,6 +8,8 @@ namespace caffe {
 template <typename Dtype>
 void EuclideanLossLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
     const vector<Blob<Dtype>*>& top) {
+  //Forward_cpu(bottom, top);
+
   int count = bottom[0]->count();
   caffe_gpu_sub(
       count,
@@ -23,6 +25,8 @@ void EuclideanLossLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
 template <typename Dtype>
 void EuclideanLossLayer<Dtype>::Backward_gpu(const vector<Blob<Dtype>*>& top,
     const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom) {
+  //Backward_cpu(top, propagate_down, bottom);
+
   for (int i = 0; i < 2; ++i) {
     if (propagate_down[i]) {
       const Dtype sign = (i == 0) ? 1 : -1;

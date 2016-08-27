@@ -41,7 +41,7 @@ class DataTransformer {
   void Transform(const Datum& datum, Blob<Dtype>* transformed_blob);
   void Transform_CPM(const Datum& datum, Blob<Dtype>* transformed_blob, Blob<Dtype>* transformed_label_blob, Blob<Dtype>* mask, int cnt); //image and label
   void Transform_COCO(const Datum& datum, Blob<Dtype>* transformed_blob, Blob<Dtype>* transformed_label_blob, Blob<Dtype>* mask, int cnt); //image and label
-  void Transform_cocobottomup(const Datum& datum, Blob<Dtype>* transformed_data, Blob<Dtype>* transformed_label, int cnt);
+  void Transform_bottomup(const Datum& datum, Blob<Dtype>* transformed_data, Blob<Dtype>* transformed_label, int cnt);
   
   /**
    * @brief Applies the transformation defined in the data layer's
@@ -224,7 +224,7 @@ class DataTransformer {
   void SetAugTable(int numData);
 
   //for cpmbottomup layer
-  void Transform_cocobottomup(const Datum& datum, Dtype* transformed_data, Dtype* transformed_label, int cnt);
+  void Transform_bottomup(const Datum& datum, Dtype* transformed_data, Dtype* transformed_label, int cnt);
   void ReadMetaData_bottomup(MetaData& meta, const string& data, size_t offset3, size_t offset1);
   //overloading for bottomup layer
   bool augmentation_flip(Mat& img, Mat& img_aug, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode);

@@ -122,67 +122,11 @@ void DataTransformer<Dtype>::ReadMetaData_bottomup(MetaData& meta, const string&
 }
 
 
-template<typename Dtype> void DataTransformer<Dtype>::Transform_cocobottomup(const Datum& datum, Blob<Dtype>* transformed_data, Blob<Dtype>* transformed_label, int cnt) {
-  //std::cout << "Function 2 is used"; std::cout.flush();
-  // int offset = datum.height()*datum.width();
-  // int offset3 = 3 * offset;
-  // int offset1 = datum.width();
-  // MetaData meta;
-  // ReadMetaData(meta, datum.data(), offset3, offset1);
-  // LOG(INFO) << "dataset: " << meta.dataset <<"; img_size: " << meta.img_size
-  //       << "; meta.annolist_index: " << meta.annolist_index;
-
-  const int datum_channels = datum.channels();
-  //LOG(INFO) << datum.channels();
-  //const int datum_height = datum.height();
-  //const int datum_width = datum.width();
-
-  const int im_channels = transformed_data->channels();
-  //LOG(INFO) << im_channels;
-  //const int im_height = transformed_data->height();
-  //const int im_width = transformed_data->width();
-  const int im_num = transformed_data->num();
-
-  //const int lb_channels = transformed_label->channels();
-  //const int lb_height = transformed_label->height();
-  //const int lb_width = transformed_label->width();
-  const int lb_num = transformed_label->num();
-
-  //LOG(INFO) << "image shape: " << transformed_data->num() << " " << transformed_data->channels() << " " 
-  //                             << transformed_data->height() << " " << transformed_data->width();
-  //LOG(INFO) << "label shape: " << transformed_label->num() << " " << transformed_label->channels() << " " 
-  //                             << transformed_label->height() << " " << transformed_label->width();
-
-  CHECK_EQ(datum_channels, 6);
-  CHECK_EQ(im_channels, 6);
-  //CHECK_EQ(im_channels, 4);
-  //CHECK_EQ(datum_channels, 4);
-  //CHECK_EQ(im_channels, 5);
-  //CHECK_EQ(datum_channels, 5);
-
-  CHECK_EQ(im_num, lb_num);
-  //CHECK_LE(im_height, datum_height);
-  //CHECK_LE(im_width, datum_width);
-  CHECK_GE(im_num, 1);
-
-  //const int crop_size = param_.crop_size();
-
-  // if (crop_size) {
-  //   CHECK_EQ(crop_size, im_height);
-  //   CHECK_EQ(crop_size, im_width);
-  // } else {
-  //   CHECK_EQ(datum_height, im_height);
-  //   CHECK_EQ(datum_width, im_width);
-  // }
-
-  Dtype* transformed_data_pointer = transformed_data->mutable_cpu_data();
-  Dtype* transformed_label_pointer = transformed_label->mutable_cpu_data();
-
-  Transform_cocobottomup(datum, transformed_data_pointer, transformed_label_pointer, cnt); //call function 1
-}
 
 
-template<typename Dtype> void DataTransformer<Dtype>::Transform_cocobottomup(const Datum& datum, Dtype* transformed_data, Dtype* transformed_label, int cnt) {
+
+template<typename Dtype> 
+void DataTransformer<Dtype>::Transform_bottomup(const Datum& datum, Dtype* transformed_data, Dtype* transformed_label, int cnt) {
   
   //TODO: some parameter should be set in prototxt
   int clahe_tileSize = param_.clahe_tile_size();
@@ -202,7 +146,7 @@ template<typename Dtype> void DataTransformer<Dtype>::Transform_cocobottomup(con
   const int datum_height = datum.height();
   const int datum_width = datum.width();
   // To do: make this a parameter in caffe.proto
-  const int mode = 6; //related to datum.channels();
+  const int mode = 5; //related to datum.channels();
 
   //const int crop_size = param_.crop_size();
   //const Dtype scale = param_.scale();
@@ -385,7 +329,7 @@ template<typename Dtype> void DataTransformer<Dtype>::Transform_cocobottomup(con
       }  
       // background channel
       //To do: if (mode = 4){
-      if(mode == 4){
+      if(mode == 5){
         transformed_label[np*channelOffset + g_y*grid_x + g_x] = float(mask_miss_aug.at<uchar>(g_y, g_x)) /255;
       }
       if(mode > 5){
@@ -924,5 +868,7 @@ void DataTransformer<Dtype>::generateLabelMap(Dtype* transformed_label, Mat& img
     // imwrite(imagename, label_map);
   }
 }
+
+//INSTANTIATE_CLASS(DataTransformer);
 
 }

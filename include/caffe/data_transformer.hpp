@@ -179,10 +179,17 @@ class DataTransformer {
     float scale_self;
     Joints joint_self; //(3*16)
     bool has_teeth_mask;
+    int image_id;
+    int num_keypoints_self;
+    float segmentation_area;
+    Bbox bbox;
 
     vector<Point2f> objpos_other; //length is numOtherPeople
     vector<float> scale_other; //length is numOtherPeople
     vector<Joints> joint_others; //length is numOtherPeople
+    vector<Bbox> bboxes_other;
+    vector<int> num_keypoints_others;
+    vector<float> segmentation_area_others;
 
     // uniquely used by coco data (detect)
     int numAnns;
@@ -213,6 +220,7 @@ class DataTransformer {
   void dumpEverything(Dtype* transformed_data, Dtype* transformed_label, MetaData);
   void generateLabelMap(Dtype*, Mat&, MetaData meta, Dtype* mask, Mat&);
   void visualize(Mat& img, MetaData meta, AugmentSelection as, Dtype* mask, Mat& teeth_mask);
+  void visualize(Mat& img, MetaData meta, AugmentSelection as, Mat& coco_mask);
 
   int augmentation_flip(Mat& img, Mat& img_aug, MetaData& meta, int);
   float augmentation_rotate(Mat& img_src, Mat& img_aug, MetaData& meta, float);
@@ -227,10 +235,10 @@ class DataTransformer {
   void Transform_bottomup(const Datum& datum, Dtype* transformed_data, Dtype* transformed_label, int cnt);
   void ReadMetaData_bottomup(MetaData& meta, const string& data, size_t offset3, size_t offset1);
   //overloading for bottomup layer
-  bool augmentation_flip(Mat& img, Mat& img_aug, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode);
-  float augmentation_rotate(Mat& img_src, Mat& img_aug, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode);
-  float augmentation_scale(Mat& img, Mat& img_temp, Mat& mask_miss, Mat& mask_all, MetaData& meta, int mode);
-  Size augmentation_croppad(Mat& img_temp, Mat& img_aug, Mat& mask_miss, Mat& mask_miss_aug, Mat& mask_all, Mat& mask_all_aug, MetaData& meta, int mode);
+  bool augmentation_flip(Mat& img, Mat& img_aug, Mat& mask_miss, Mat& mask_all, MetaData& meta);
+  float augmentation_rotate(Mat& img_src, Mat& img_aug, Mat& mask_miss, Mat& mask_all, MetaData& meta);
+  float augmentation_scale(Mat& img, Mat& img_temp, Mat&, Mat&, MetaData& meta);
+  Size augmentation_croppad(Mat& img_temp, Mat& img_aug, Mat& mask_miss, Mat& mask_miss_aug, Mat& mask_all, Mat& mask_all_aug, MetaData& meta);
   void generateLabelMap(Dtype*, Mat&, MetaData meta);
 
   void putVecMaps(Dtype* entryX, Dtype* entryY, Mat& count, Point2f centerA, Point2f centerB, int stride, int grid_x, int grid_y, float sigma, int thre);

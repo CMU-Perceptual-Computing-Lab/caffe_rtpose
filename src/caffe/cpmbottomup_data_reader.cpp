@@ -17,7 +17,7 @@ static boost::mutex bodies_mutex_;
 
 CPMBottomUpDataReader::CPMBottomUpDataReader(const LayerParameter& param)
     : queue_pair_(new QueuePair(  //
-        param.cocodata_param().prefetch() * param.cocodata_param().batch_size())) {
+        param.cpmbottomup_param().prefetch() * param.cpmbottomup_param().batch_size())) {
   // Get or create a body
   boost::mutex::scoped_lock lock(bodies_mutex_);
   string key = source_key(param);
@@ -69,10 +69,12 @@ CPMBottomUpDataReader::Body::~Body() {
 }
 
 void CPMBottomUpDataReader::Body::InternalThreadEntry() {
-  shared_ptr<db::DB> db(db::GetDB(param_.cocodata_param().backend())); // note data_param and cocodata_param is conflicting..
-  db->Open(param_.cocodata_param().source(), db::READ);
+  shared_ptr<db::DB> db(db::GetDB(param_.cpmbottomup_param().backend())); // note data_param and cpmbottomup_param is conflicting..
+  db->Open(param_.cpmbottomup_param().source(), db::READ);
   shared_ptr<db::Cursor> cursor(db->NewCursor());
   vector<shared_ptr<QueuePair> > qps;
+
+  //LOG(INFO) << "into main loop";
   try {
     int solver_count = param_.phase() == TRAIN ? Caffe::solver_count() : 1;
 
@@ -94,6 +96,7 @@ void CPMBottomUpDataReader::Body::InternalThreadEntry() {
       // or multi solver. It might also happen if two data layers have same
       // name and same source.
       CHECK_EQ(new_queue_pairs_.size(), 0);
+      //LOG(INFO) << "in main loop";
     }
   } catch (boost::thread_interrupted&) {
     // Interrupted exception is expected on shutdown
@@ -101,6 +104,7 @@ void CPMBottomUpDataReader::Body::InternalThreadEntry() {
 }
 
 void CPMBottomUpDataReader::Body::read_one(db::Cursor* cursor, QueuePair* qp) {
+  //LOG(INFO) << "read_one in";
   Datum* datum = qp->free_.pop();
   // TODO deserialize in-place instead of copy?
   datum->ParseFromString(cursor->value());
@@ -112,6 +116,7 @@ void CPMBottomUpDataReader::Body::read_one(db::Cursor* cursor, QueuePair* qp) {
     DLOG(INFO) << "Restarting data prefetching from start.";
     cursor->SeekToFirst();
   }
+  //LOG(INFO) << "read_one out";
 }
 
 }  // namespace caffe

@@ -121,10 +121,12 @@ void BasePrefetchingDataLayer<Dtype>::Forward_cpu(
         top[1]->mutable_cpu_data());
 
     // masks
-    top[2]->ReshapeLike(batch->missing_part_mask_);
-    // Copy the labels.
-    caffe_copy(batch->missing_part_mask_.count(), batch->missing_part_mask_.cpu_data(),
-        top[2]->mutable_cpu_data());
+    if(top.size() >= 3){
+      top[2]->ReshapeLike(batch->missing_part_mask_);
+      // Copy the labels.
+      caffe_copy(batch->missing_part_mask_.count(), batch->missing_part_mask_.cpu_data(),
+          top[2]->mutable_cpu_data());
+    }
   }
 
   prefetch_free_.push(batch);

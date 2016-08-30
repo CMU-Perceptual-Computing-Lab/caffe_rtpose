@@ -28,12 +28,12 @@ void CPMBottomUpDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bot
       const vector<Blob<Dtype>*>& top) {
   
   // Read a data point, and use it to initialize the top blob.
+  LOG(INFO) << "setting up data layer";
   Datum& datum = *(reader_.full().peek());
-  LOG(INFO) << datum.height() << " " << datum.width() << " " << datum.channels();
-
+  LOG(INFO) << "datum readed: " << datum.height() << " " << datum.width() << " " << datum.channels();
 
   // image
-  const int batch_size = this->layer_param_.cpmdata_param().batch_size();
+  const int batch_size = this->layer_param_.cpmbottomup_param().batch_size();
   const int height = this->layer_param_.transform_param().crop_size_y();
   const int width = this->layer_param_.transform_param().crop_size_x();
 
@@ -78,7 +78,6 @@ void CPMBottomUpDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
   // Reshape on single input batches for inputs of varying dimension.
   const int batch_size = this->layer_param_.cpmbottomup_param().batch_size();
   
-  
   Dtype* top_data = batch->data_.mutable_cpu_data();
   Dtype* top_label = NULL;  // suppress warnings about uninitialized variables
 
@@ -103,6 +102,8 @@ void CPMBottomUpDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
       &(this->transformed_data_),
       &(this->transformed_label_), cnt);
     ++cnt;
+
+    //LOG(INFO) << "Transform done";
     
     // if (this->output_labels_) {
     //   top_label[item_id] = datum.label();

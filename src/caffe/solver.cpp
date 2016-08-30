@@ -199,7 +199,7 @@ void Solver<Dtype>::Step(int iters) {
   smoothed_loss_ = 0;
 
   while (iter_ < stop_iter) {
-    if(iter_ == 0) Snapshot();
+    //if(iter_ == 0) Snapshot();
 
     // zero-init the params
     net_->ClearParamDiffs();

@@ -6,6 +6,8 @@
 #include <opencv2/opencv.hpp>
 using namespace cv;
 
+#include <fstream>
+
 #include "caffe/blob.hpp"
 #include "caffe/common.hpp"
 #include "caffe/proto/caffe.pb.h"
@@ -20,7 +22,7 @@ template <typename Dtype>
 class DataTransformer {
  public:
   explicit DataTransformer(const TransformationParameter& param, Phase phase);
-  virtual ~DataTransformer() {}
+  virtual ~DataTransformer() {ofs_analysis.close();}
 
   /**
    * @brief Initialize the Random number generations if needed by the
@@ -247,6 +249,8 @@ class DataTransformer {
   //utility
   void DecodeFloats(const string& data, size_t idx, float* pf, size_t len);
   string DecodeString(const string& data, size_t idx);
+  void writeAugAnalysis(MetaData& meta);
+  std::ofstream ofs_analysis;
 
   // Tranformation parameters
   TransformationParameter param_;

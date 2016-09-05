@@ -217,12 +217,14 @@ class DataTransformer {
   void TransformMetaJoints(MetaData& meta);
   void TransformJoints(Joints& joints);
   void clahe(Mat& img, int, int);
-  void putGaussianMaps(Dtype* entry, Point2f center, int stride, int grid_x, int grid_y, float sigma);
+  void putGaussianMaps(Dtype* entry, Point2f center, int stride, int grid_x, int grid_y, float sigma, float peak_ratio=1.0);
   void putGaussianMaps(Dtype* entry, Bbox b, int stride, int grid_x, int grid_y, float sigma_0);
   void dumpEverything(Dtype* transformed_data, Dtype* transformed_label, MetaData);
   void generateLabelMap(Dtype*, Mat&, MetaData meta, Dtype* mask, Mat&);
   void visualize(Mat& img, MetaData meta, AugmentSelection as, Dtype* mask, Mat& teeth_mask);
   void visualize(Mat& img, MetaData meta, AugmentSelection as, Mat& coco_mask);
+
+  void putScaleMaps(Dtype* entry, Point2f center, int stride, int grid_x, int grid_y, float sigma, float scale_normalize);
 
   int augmentation_flip(Mat& img, Mat& img_aug, MetaData& meta, int);
   float augmentation_rotate(Mat& img_src, Mat& img_aug, MetaData& meta, float);
@@ -243,7 +245,7 @@ class DataTransformer {
   Size augmentation_croppad(Mat& img_temp, Mat& img_aug, Mat& mask_miss, Mat& mask_miss_aug, Mat& mask_all, Mat& mask_all_aug, MetaData& meta);
   void generateLabelMap(Dtype*, Mat&, MetaData meta);
 
-  void putVecMaps(Dtype* entryX, Dtype* entryY, Mat& count, Point2f centerA, Point2f centerB, int stride, int grid_x, int grid_y, float sigma, int thre);
+  void putVecMaps(Dtype* entryX, Dtype* entryY, Mat& count, Point2f centerA, Point2f centerB, int stride, int grid_x, int grid_y, float sigma, int thre, float peak_ratio=1.0);
   void putVecPeaks(Dtype* entryX, Dtype* entryY, Mat& count, Point2f centerA, Point2f centerB, int stride, int grid_x, int grid_y, float sigma, int thre);
 
   //utility

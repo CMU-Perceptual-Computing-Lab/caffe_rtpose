@@ -569,6 +569,9 @@ message TransformationParameter {
   optional bool put_gaussian = 39 [default = true];
   optional bool has_masks = 40 [default = false];
   optional bool analysis = 41 [default = false];
+  optional bool use_segmentation_scale = 42 [default = false];
+  optional bool selective_scale = 43 [default = false];
+  optional bool per_part_scale = 44 [default = false];
 }
 
 message ImResizeParameter {

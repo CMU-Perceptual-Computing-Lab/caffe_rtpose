@@ -827,7 +827,7 @@ float DataTransformer<Dtype>::augmentation_rotate(Mat& img_src, Mat& img_dst, Me
 }
 
 template<typename Dtype>
-void DataTransformer<Dtype>::putGaussianMaps(Dtype* entry, Point2f center, int stride, int grid_x, int grid_y, float sigma){
+void DataTransformer<Dtype>::putGaussianMaps(Dtype* entry, Point2f center, int stride, int grid_x, int grid_y, float sigma, float peak_ratio){
   //LOG(INFO) << "putGaussianMaps here we start for " << center.x << " " << center.y;
   float start = stride/2.0 - 0.5; //0 if stride = 1, 0.5 if stride = 2, 1.5 if stride = 4, ...
   for (int g_y = 0; g_y < grid_y; g_y++){
@@ -839,7 +839,7 @@ void DataTransformer<Dtype>::putGaussianMaps(Dtype* entry, Point2f center, int s
       if(exponent > 4.6052){ //ln(100) = -ln(1%)
         continue;
       }
-      entry[g_y*grid_x + g_x] += exp(-exponent);
+      entry[g_y*grid_x + g_x] += peak_ratio * exp(-exponent);
       if(entry[g_y*grid_x + g_x] > 1) 
         entry[g_y*grid_x + g_x] = 1;
     }
@@ -887,6 +887,23 @@ void DataTransformer<Dtype>::putGaussianMaps(Dtype* entry, Bbox b, int stride, i
       entry[g_y*grid_x + g_x] += exp(-exponent);
       //if(entry[g_y*grid_x + g_x] > 1) 
       //  entry[g_y*grid_x + g_x] = 1;
+    }
+  }
+}
+
+template<typename Dtype>
+void DataTransformer<Dtype>::putScaleMaps(Dtype* entry, Point2f center, int stride, int grid_x, int grid_y, float sigma, float scale_normalize){
+  //LOG(INFO) << "putGaussianMaps here we start for " << center.x << " " << center.y;
+  float start = stride/2.0 - 0.5; //0 if stride = 1, 0.5 if stride = 2, 1.5 if stride = 4, ...
+  for (int g_y = 0; g_y < grid_y; g_y++){
+    for (int g_x = 0; g_x < grid_x; g_x++){
+      float x = start + g_x * stride;
+      float y = start + g_y * stride;
+      float d2 = (x-center.x)*(x-center.x) + (y-center.y)*(y-center.y);
+      float exponent = d2 / 2.0 / sigma / sigma;
+      if(exponent < 2.3026){ // -ln(10%)
+        entry[g_y*grid_x + g_x] = scale_normalize;
+      }
     }
   }
 }
@@ -2221,7 +2238,15 @@ float DataTransformer<Dtype>::augmentation_scale(Mat& img_src, Mat& img_temp,
     float dice2 = static_cast <float> (rand()) / static_cast <float> (RAND_MAX); //[0,1]
     scale_multiplier = (param_.scale_max() - param_.scale_min()) * dice2 + param_.scale_min(); //linear shear into [scale_min, scale_max]
   }
-  float scale_abs = param_.target_dist()/meta.scale_self;
+  float scale_abs; 
+  if(!param_.use_segmentation_scale()){
+    //scale_abs = param_.target_dist()/meta.scale_self;
+    meta.scale_self = max(meta.bbox.width, meta.bbox.height) / 368;
+    scale_abs = param_.target_dist() / meta.scale_self;
+  } else {
+    scale_abs = param_.target_dist() / sqrt(meta.segmentation_area); //bad.
+  }
+
   float scale = scale_abs * scale_multiplier;
 
   if(!param_.analysis()){
@@ -2454,7 +2479,7 @@ void DataTransformer<Dtype>::putVecPeaks(Dtype* entryX, Dtype* entryY, Mat& coun
 }
 
 template<typename Dtype>
-void DataTransformer<Dtype>::putVecMaps(Dtype* entryX, Dtype* entryY, Mat& count, Point2f centerA, Point2f centerB, int stride, int grid_x, int grid_y, float sigma, int thre){
+void DataTransformer<Dtype>::putVecMaps(Dtype* entryX, Dtype* entryY, Mat& count, Point2f centerA, Point2f centerB, int stride, int grid_x, int grid_y, float sigma, int thre, float peak_ratio){
   //int thre = 4;
   centerB = centerB*0.125;
   centerA = centerA*0.125;
@@ -2493,8 +2518,8 @@ void DataTransformer<Dtype>::putVecMaps(Dtype* entryX, Dtype* entryY, Mat& count
         int cnt = count.at<uchar>(g_y, g_x);
         //LOG(INFO) << "putVecMaps here we start for " << g_x << " " << g_y;
         if (cnt == 0){
-          entryX[g_y*grid_x + g_x] = bc.x;
-          entryY[g_y*grid_x + g_x] = bc.y;
+          entryX[g_y*grid_x + g_x] = bc.x * peak_ratio;
+          entryY[g_y*grid_x + g_x] = bc.y * peak_ratio;
         }
         else{
           entryX[g_y*grid_x + g_x] = (entryX[g_y*grid_x + g_x]*cnt + bc.x) / (cnt + 1);
@@ -2613,8 +2638,8 @@ void DataTransformer<Dtype>::generateLabelMap(Dtype* transformed_label, Mat& img
   for (int g_y = 0; g_y < grid_y; g_y++){
     for (int g_x = 0; g_x < grid_x; g_x++){
       for (int i = np+1; i < 2*(np+1); i++){
-        if (mode == 6 && i == (2*np + 1))
-          continue;
+        //if (mode == 6 && i == (2*np + 1))
+          //continue;
         transformed_label[i*channelOffset + g_y*grid_x + g_x] = 0;
       }
     }
@@ -2686,47 +2711,93 @@ void DataTransformer<Dtype>::generateLabelMap(Dtype* transformed_label, Mat& img
       // if (i>14){
       //   thre = 1;
       // }
+      float peak_ratio = 1;
+      if(param_.selective_scale()){
+        peak_ratio = exp(-(meta.scale_self/param_.target_dist() - 1) * (meta.scale_self/param_.target_dist() - 1) / 0.1086);
+      }
+
       Mat count = Mat::zeros(grid_y, grid_x, CV_8UC1);
       Joints jo = meta.joint_self;
       if(jo.isVisible[mid_1[i]-1]<=1 && jo.isVisible[mid_2[i]-1]<=1){
         //putVecPeaks
         putVecMaps(transformed_label + (np+1+2*i)*channelOffset, transformed_label + (np+1+(2*i+1))*channelOffset, 
-                  count, jo.joints[mid_1[i]-1], jo.joints[mid_2[i]-1], param_.stride(), grid_x, grid_y, param_.sigma(), thre); //self
+                  count, jo.joints[mid_1[i]-1], jo.joints[mid_2[i]-1], param_.stride(), grid_x, grid_y, param_.sigma(), thre, 
+                  peak_ratio); //self
       }
 
       for(int j = 0; j < meta.numOtherPeople; j++){ //for every other person
+        peak_ratio = 1;
+        if(param_.selective_scale()){
+          peak_ratio = exp(-(meta.scale_other[j]/param_.target_dist() - 1) * (meta.scale_other[j]/param_.target_dist() - 1) / 0.1086);
+        }
+
         Joints jo2 = meta.joint_others[j];
         if(jo2.isVisible[mid_1[i]-1]<=1 && jo2.isVisible[mid_2[i]-1]<=1){
           //putVecPeaks
           putVecMaps(transformed_label + (np+1+2*i)*channelOffset, transformed_label + (np+1+(2*i+1))*channelOffset, 
-                  count, jo2.joints[mid_1[i]-1], jo2.joints[mid_2[i]-1], param_.stride(), grid_x, grid_y, param_.sigma(), thre); //self
+                  count, jo2.joints[mid_1[i]-1], jo2.joints[mid_2[i]-1], param_.stride(), grid_x, grid_y, param_.sigma(), thre, 
+                  peak_ratio); //self
         }
       }
     }
+
+    
 
     for (int i = 0; i < 18; i++){
       Point2f center = meta.joint_self.joints[i];
+      float peak_ratio = 1;
+      if(param_.selective_scale()){
+        peak_ratio = exp(-(meta.scale_self/param_.target_dist() - 1) * (meta.scale_self/param_.target_dist() - 1) / 0.1086);
+      }
       if(meta.joint_self.isVisible[i] <= 1) {
         putGaussianMaps(transformed_label + (np+1+38+i)*channelOffset, center, param_.stride(), 
-                        grid_x, grid_y, param_.sigma()); //self
+                        grid_x, grid_y, param_.sigma(), peak_ratio); //self
       }
+
       for(int j = 0; j < meta.numOtherPeople; j++){ //for every other person
+        peak_ratio = 1;
+        if(param_.selective_scale()){
+          peak_ratio = exp(-(meta.scale_other[j]/param_.target_dist() - 1) * (meta.scale_other[j]/param_.target_dist() - 1) / 0.1086);
+          //LOG(INFO) << meta.scale_other[j] << "   " << param_.target_dist() << "   " << peak_ratio;
+        }
+        
         Point2f center = meta.joint_others[j].joints[i];
         if(meta.joint_others[j].isVisible[i] <= 1) {
           putGaussianMaps(transformed_label + (np+1+38+i)*channelOffset, center, param_.stride(), 
-                          grid_x, grid_y, param_.sigma());
+                          grid_x, grid_y, param_.sigma(), peak_ratio);
         }
       }
     }
 
-    //put background channel
-    for (int g_y = 0; g_y < grid_y; g_y++){
-      for (int g_x = 0; g_x < grid_x; g_x++){
-        float maximum = 0;
-        for (int i = np+1+38; i < np+1+38+18; i++){
-          maximum = (maximum > transformed_label[i*channelOffset + g_y*grid_x + g_x]) ? maximum : transformed_label[i*channelOffset + g_y*grid_x + g_x];
+    if(!param_.per_part_scale()){
+      //put background channel
+      for (int g_y = 0; g_y < grid_y; g_y++){
+        for (int g_x = 0; g_x < grid_x; g_x++){
+          float maximum = 0;
+          for (int i = np+1+38; i < np+1+38+18; i++){
+            maximum = (maximum > transformed_label[i*channelOffset + g_y*grid_x + g_x]) ? maximum : transformed_label[i*channelOffset + g_y*grid_x + g_x];
+          }
+          transformed_label[(2*np+1)*channelOffset + g_y*grid_x + g_x] = max(1.0-maximum, 0.0); // last ch
         }
-        transformed_label[(2*np+1)*channelOffset + g_y*grid_x + g_x] = max(1.0-maximum, 0.0); // last ch
+      }
+    } else {
+      for(int i = 0; i < 18; i++){
+        Point2f center = meta.joint_self.joints[i];
+        float scale_normalize = meta.scale_self - 0.6; // scale_self will be around 0
+        if(meta.joint_self.isVisible[i] <= 1) {
+          putScaleMaps(transformed_label + (np+1+38+18)*channelOffset, center, param_.stride(), 
+                        grid_x, grid_y, param_.sigma(), scale_normalize); //self
+        }
+
+        for(int j = 0; j < meta.numOtherPeople; j++){
+          center = meta.joint_others[j].joints[i];
+          scale_normalize = meta.scale_other[j] - 0.6;
+          if(meta.joint_others[j].isVisible[i] <= 1){
+            putScaleMaps(transformed_label + (np+1+38+18)*channelOffset, center, param_.stride(), 
+                        grid_x, grid_y, param_.sigma(), scale_normalize); //self
+          }
+        }
+
       }
     }
     //LOG(INFO) << "background put";
@@ -2772,20 +2843,22 @@ void DataTransformer<Dtype>::generateLabelMap(Dtype* transformed_label, Mat& img
   }
 
   //visualize
-  if(0 && param_.visualize()){
+  if(1 && param_.visualize()){
     Mat label_map;
-    for(int i = 0; i < 2*(np+1); i++){      
+    for(int i = 2*(np+1)-1; i < 2*(np+1); i++){
+    //for(int i = 0; i < 2*(np+1); i++){      
       label_map = Mat::zeros(grid_y, grid_x, CV_8UC1);
       //int MPI_index = MPI_to_ours[i];
       //Point2f center = meta.joint_self.joints[MPI_index];
       for (int g_y = 0; g_y < grid_y; g_y++){
         //printf("\n");
         for (int g_x = 0; g_x < grid_x; g_x++){
-          label_map.at<uchar>(g_y,g_x) = (int)(transformed_label[i*channelOffset + g_y*grid_x + g_x]*255);
+          //label_map.at<uchar>(g_y,g_x) = (int)(transformed_label[i*channelOffset + g_y*grid_x + g_x]*255);
+          label_map.at<uchar>(g_y,g_x) = (int)((0.6+transformed_label[i*channelOffset + g_y*grid_x + g_x])*100);
           //printf("%f ", transformed_label_entry[g_y*grid_x + g_x]*255);
         }
       }
-      resize(label_map, label_map, Size(), stride, stride, INTER_LINEAR);
+      resize(label_map, label_map, Size(), stride, stride, INTER_CUBIC);
       applyColorMap(label_map, label_map, COLORMAP_JET);
       addWeighted(label_map, 0.5, img_aug, 0.5, 0.0, label_map);
       

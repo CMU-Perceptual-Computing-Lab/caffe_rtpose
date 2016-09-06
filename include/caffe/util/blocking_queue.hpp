@@ -16,8 +16,20 @@ struct Frame {
   double postprocesse_end_time;
   double buffer_start_time;
   double buffer_end_time;
-  int index;
+  int index;  // coco's id
   int numPeople;
+
+  //only used for coco
+  int counter;
+  float scale;
+  int ori_width;
+  int ori_height;
+  int scaled_width;
+  int scaled_height;
+  int padded_width; //should be 8x for net
+  int padded_height; //should be 8x for net
+
+  float* net_output; // raw heatmap in size padded_width/8 * padded_height/8
 };
 
 

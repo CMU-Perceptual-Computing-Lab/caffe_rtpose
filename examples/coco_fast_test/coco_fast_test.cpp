@@ -58,7 +58,7 @@ using namespace cv;
 #define origin_width 640
 #define MAX_PEOPLE_IN_BATCH 32
 #define BUFFER_SIZE 4    //affects latency
-#define MAX_LENGTH_INPUT_QUEUE 500 //affects memory usage
+#define MAX_LENGTH_INPUT_QUEUE 5000 //affects memory usage
 #define FPS_SRC 30
 
 int NUM_GPU;  //4
@@ -395,9 +395,9 @@ void* getFrameFromCam(void *i){
 
 			// f.preprocessed_time = get_wall_time();
 
-			// // while(global.input_queue.size() > MAX_LENGTH_INPUT_QUEUE){
-			// //  	//sleep(1);
-			// // }
+			while(global.input_queue.size() > MAX_LENGTH_INPUT_QUEUE){
+				sleep(1);
+			}
 			global.input_queue.push(f);
 			//LOG(ERROR) << "Frame " << f.index << " committed with init_time " << fixed << f.commit_time;
 			//LOG(ERROR) << "pushing frame " << index << " to input_queue, now size " << global.input_queue.size();

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Caffe
 
 [![Build Status](https://travis-ci.org/BVLC/caffe.svg?branch=master)](https://travis-ci.org/BVLC/caffe)
@@ -36,3 +37,9 @@ Please cite Caffe in your publications if it helps your research:
       Year = {2014}
     }
 # caffe_coco
+=======
+# caffe_demo
+
+Caffe for multi-person pose estimation demo. 
+compatiable with CUDA 7.5/8, cudnn 5.1, Ubuntu 14.04/16.04
+>>>>>>> 13f74b73bc4c05b33d9f57d15161f0524c45e002

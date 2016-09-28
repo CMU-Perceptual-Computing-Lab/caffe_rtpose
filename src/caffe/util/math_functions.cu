@@ -11,11 +11,13 @@
 #define numThreadsPerBlock_1d 32
 #define numThreadsPerBlock 1024
 
-
 namespace caffe {
 
+int updiv(int a, int b){
+  return (a+b-1)/b;
+}
 
-// **** kernel code ****
+
 __global__ void fill_image(const float* src_pointer, int w, int h, 
                            float* dst_pointer, int boxsize, const float* info, int p) {
   // get pixel location (x,y) within (boxsize, boxsize)
@@ -61,6 +63,45 @@ __global__ void fill_gassian(float* dst_pointer, int boxsize, float sigma){
       dst_pointer[y * boxsize + x] = exp(-exponent);
     }
   }
+}
+
+void fill_pose_net(const float* image, int width, int height, 
+                   float* dst, int boxsize, 
+                   const float* peak_pointer_gpu, vector<int> num_people, int limit){
+  //image            in width * height * 3 * N
+  //dst              in boxsize * boxsize * 4 * (P1+P2+...+PN)
+  //peak_pointer_gpu in 2 * 11 * 1 * N
+  //num_people has length P, indicating P1, ..., PN
+
+  int N = num_people.size();
+  int count = 0;
+  bool full = false;
+  int offset_src = width * height * 3;
+  int offset_dst_2 = boxsize * boxsize;
+  int offset_info = 22;
+  dim3 threadsPerBlock(numThreadsPerBlock_1d, numThreadsPerBlock_1d);
+  dim3 numBlocks(updiv(boxsize, threadsPerBlock.x), updiv(boxsize, threadsPerBlock.y));
+
+  for(int i = 0; i < N; i++){
+    //LOG(ERROR) << "copying " << num_people[i] << " people.";
+    for(int p = 0; p < num_people[i]; p++){
+      fill_image<<<threadsPerBlock, numBlocks>>>(image + i * offset_src, width, height, 
+                                                 dst + count * (4 * offset_dst_2), boxsize, 
+                                                 peak_pointer_gpu + i * offset_info, p);
+      //src, w, h, dst, boxsize, info, p
+      
+      fill_gassian<<<threadsPerBlock, numBlocks>>>(dst + count * (4 * offset_dst_2) + 3 * offset_dst_2, boxsize, 21);
+      //dst, boxsize
+
+      count++;
+      if(count >= limit){
+        full = true;
+        break;
+      }
+    }
+    if(full) break;
+  }
+  cudaDeviceSynchronize();
 }
 
 __global__ void render_pose(float* dst_pointer, float* image_ref, int w, int h, 
@@ -175,6 +216,149 @@ __global__ void render_pose(float* dst_pointer, float* image_ref, int w, int h,
     // }
   }
 }
+
+
+void render_in_cuda(float* canvas, float* image, int w, int h, 
+                    float* heatmaps, int boxsize, 
+                    float* centers, float* poses, vector<int> num_people){
+  //canvas, image    in width * height * 3 * N
+  //heatmaps         in boxsize * boxsize * 15 * (P1+P2+...+PN)
+  //centers          in 2 * 11 * 1 * N
+  //poses            in 3 * 1 * 15 * (P1+P2+...+PN)
+  //num_people has length P, indicating P1, ..., PN
+
+  int N = num_people.size();
+  //LOG(ERROR) << "Number of frames in batch: " << N;
+  //int count = 0;
+  int offset_person = w * h * 3; // 3 because we only render one image here
+  int offset_pose_2 = boxsize * boxsize;
+  int offset_info = 22;
+  int offset_pose = 45;
+  float threshold = 0.15;
+  int offset_pose_so_far = 0;
+
+  dim3 threadsPerBlock(numThreadsPerBlock_1d, numThreadsPerBlock_1d);
+  dim3 numBlocks(updiv(w, threadsPerBlock.x), updiv(h, threadsPerBlock.y));
+
+  for(int i = 0; i < N; i++){
+    int num_people_this_frame = num_people[i];
+    //LOG(ERROR) << "num_people_this_frame: " << num_people_this_frame;
+    
+    render_pose<<<threadsPerBlock, numBlocks>>>(canvas+i*offset_person, image+i*offset_person, w, h, 
+                                                centers+i*offset_info, poses+offset_pose_so_far, boxsize, 
+                                                num_people_this_frame, threshold);
+
+    //LOG(ERROR) << "num_people[i] = " << num_people[i];
+    cudaDeviceSynchronize();
+    offset_pose_so_far += offset_pose * num_people[i];
+  }
+  //
+  //LOG(ERROR) << "render_done";
+}
+
+
+__global__ void render_pose_29parts(float* dst_pointer, int w_canvas, int h_canvas, float ratio_to_origin, 
+                             float* poses, int boxsize, int num_people, float threshold){
+  //poses has length 3 * 15 * num_people
+  int x = (blockIdx.x * blockDim.x) + threadIdx.x;
+  int y = (blockIdx.y * blockDim.y) + threadIdx.y;
+  //int plotted = 0;
+  int global_idx = threadIdx.y * blockDim.x + threadIdx.x;
+
+  __shared__ float shared_poses[450];
+  if(global_idx < num_people * 15){
+    shared_poses[3*global_idx] = poses[3*global_idx]; //x
+    shared_poses[3*global_idx+1] = poses[3*global_idx+1]; //y
+    shared_poses[3*global_idx+2] = poses[3*global_idx+2]; //v
+  }
+
+  __syncthreads();
+
+  int nlimb = 9;
+  int limb[18] = {0, 1,  2, 3,  3, 4,  5,  6,  
+                  6, 7,  8, 9,  9, 10, 11, 12, 12, 13};
+  int color[27] =   {255,   0, 0,
+                     255, 170, 0,
+                     170, 255, 0,
+                       0, 255, 0,
+                       0, 255, 170,
+                       0, 170, 255,
+                       0, 0,   255,
+                     170, 0,   255,
+                     255, 0,   170};
+  //float offset = ratio_to_origin * 0.5 - 0.5;
+  float radius = h_canvas / 200.0f;
+  float stickwidth = h_canvas / 60.0f;
+
+  if(x < w_canvas && y < h_canvas){
+  //if(x == 0 && y == 0){
+    float b, g, r;
+
+    // b = 255 * 0.7 + 0.3 * (image_ref[y*w + x] + 0.5) * 256;
+    // g = 255 * 0.7 + 0.3 * (image_ref[w*h + y*w + x] + 0.5) * 256;
+    // r = 255 * 0.7 + 0.3 * (image_ref[2*w*h + y*w + x] + 0.5) * 256;
+
+    b = dst_pointer[                          y * w_canvas + x];
+    g = dst_pointer[    w_canvas * h_canvas + y * w_canvas + x];
+    r = dst_pointer[2 * w_canvas * h_canvas + y * w_canvas + x];
+
+    for(int p = 0; p < num_people; p++){
+      for(int l = 0; l < nlimb; l++){
+        int part_a = limb[2*l];
+        int part_b = limb[2*l+1];
+        float x_a = (shared_poses[p*45 + part_a*3]); // * ratio_to_origin + offset;
+        float x_b = (shared_poses[p*45 + part_b*3]); // * ratio_to_origin + offset;
+        float y_a = (shared_poses[p*45 + part_a*3 + 1]); // * ratio_to_origin + offset;
+        float y_b = (shared_poses[p*45 + part_b*3 + 1]); // * ratio_to_origin + offset;
+        float value_a = shared_poses[p*45 + part_a*3 + 2];
+        float value_b = shared_poses[p*45 + part_b*3 + 2];
+        if(value_a > threshold && value_b > threshold){
+          float x_p = (x_a + x_b) / 2;
+          float y_p = (y_a + y_b) / 2;
+          float angle = atan2f(y_b - y_a, x_b - x_a);
+          float sine = sinf(angle);
+          float cosine = cosf(angle);
+          float a_sqrt = (x_a - x_p) * (x_a - x_p) + (y_a - y_p) * (y_a - y_p);
+          float b_sqrt = stickwidth * stickwidth; //fixed
+
+          float A = cosine * (x - x_p) + sine * (y - y_p);
+          float B = sine * (x - x_p) - cosine * (y - y_p);
+          float judge = A * A / a_sqrt + B * B / b_sqrt;
+
+          if(judge <= 1){
+            b = 0.4 * b + 0.6 * color[l*3+2];
+            g = 0.4 * g + 0.6 * color[l*3+1];
+            r = 0.4 * r + 0.6 * color[l*3];
+            //plotted = 1;
+          }
+        }
+      }
+
+      for(int i = 0; i < 14; i++) { //for every point
+        float local_x = shared_poses[p*45 + i*3];
+        float local_y = shared_poses[p*45 + i*3 + 1];
+        float value = shared_poses[p*45 + i*3 + 2];
+        float pose_x_on_image = local_x; // * ratio_to_origin + offset;
+        float pose_y_on_image = local_y; // * ratio_to_origin + offset;
+
+        if(value > threshold) {
+          if((x - pose_x_on_image) * (x - pose_x_on_image) + (y - pose_y_on_image) * (y - pose_y_on_image) <= radius * radius){
+            b = g = r = 0;
+          }
+        }
+
+      }
+    }
+
+    dst_pointer[                          y * w_canvas + x] = b; //plot dot
+    dst_pointer[    w_canvas * h_canvas + y * w_canvas + x] = g;
+    dst_pointer[2 * w_canvas * h_canvas + y * w_canvas + x] = r;
+    // if(x==0 && y==0){
+    //   printf("exiting\n");
+    // }
+  }
+}
+
 
 __global__ void render_pose_website(float* dst_pointer, int w_canvas, int h_canvas, float ratio_to_origin, 
                              float* centers, float* poses, int boxsize, 
@@ -337,6 +521,90 @@ inline __device__ void cubic_interpolation(float &out, float &v0, float &v1, flo
          + v1;
 }
 
+
+__global__ void render_pose_29parts_heatmap(float* dst_pointer, int w_canvas, int h_canvas, int w_net, 
+                                            int h_net, float* heatmaps, int num_people, int part){
+
+  int x = (blockIdx.x * blockDim.x) + threadIdx.x;
+  int y = (blockIdx.y * blockDim.y) + threadIdx.y;
+  int global_idx = threadIdx.y * blockDim.x + threadIdx.x;
+
+  __syncthreads();
+
+  if(x < w_canvas && y < h_canvas){
+    //heatmaps has length w_net * h_net * 15
+    int offset3 = w_net * h_net * 15;
+    int offset2 = w_net * h_net;
+
+    float b, g, r;
+    float value = (part == 14) ? 1 : 0;
+    float h_inv = (float)h_net / (float)h_canvas;
+    float w_inv = (float)w_net / (float)w_canvas;
+    // b = 255 * 0.7 + 0.3 * (image_ref[y*w + x] + 0.5) * 256;
+    // g = 255 * 0.7 + 0.3 * (image_ref[w*h + y*w + x] + 0.5) * 256;
+    // r = 255 * 0.7 + 0.3 * (image_ref[2*w*h + y*w + x] + 0.5) * 256;
+
+    b = dst_pointer[                          y * w_canvas + x];
+    g = dst_pointer[    w_canvas * h_canvas + y * w_canvas + x];
+    r = dst_pointer[2 * w_canvas * h_canvas + y * w_canvas + x];
+
+    for(int p = 0; p < 1; p++){
+
+      float x_on_box = w_inv * x + (0.5 * w_inv - 0.5);
+      float y_on_box = h_inv * y + (0.5 * h_inv - 0.5);
+
+      if(x_on_box >= 0 && x_on_box < w_net && y_on_box >=0 && y_on_box < h_net){
+        float value_this;
+        int x_nei[4];
+        x_nei[1] = int(x_on_box + 1e-5);
+        x_nei[1] = (x_nei[1] < 0) ? 0 : x_nei[1];
+        x_nei[0] = (x_nei[1] - 1 < 0) ? x_nei[1] : (x_nei[1] - 1);
+        x_nei[2] = (x_nei[1] + 1 >= w_net) ? (w_net - 1) : (x_nei[1] + 1);
+        x_nei[3] = (x_nei[2] + 1 >= w_net) ? (w_net - 1) : (x_nei[2] + 1);
+        float dx = x_on_box - x_nei[1];
+
+        int y_nei[4];
+        y_nei[1] = int(y_on_box + 1e-5);
+        y_nei[1] = (y_nei[1] < 0) ? 0 : y_nei[1];
+        y_nei[0] = (y_nei[1] - 1 < 0) ? y_nei[1] : (y_nei[1] - 1);
+        y_nei[2] = (y_nei[1] + 1 >= h_net) ? (h_net - 1) : (y_nei[1] + 1);
+        y_nei[3] = (y_nei[2] + 1 >= h_net) ? (h_net - 1) : (y_nei[2] + 1);
+        float dy = y_on_box - y_nei[1];
+
+        float temp[4];
+        int offset_src = p * offset3 + part * offset2;
+        for(int i = 0; i < 4; i++){
+          cubic_interpolation(temp[i], heatmaps[offset_src + y_nei[i]*w_net + x_nei[0]], 
+                                       heatmaps[offset_src + y_nei[i]*w_net + x_nei[1]], 
+                                       heatmaps[offset_src + y_nei[i]*w_net + x_nei[2]],
+                                       heatmaps[offset_src + y_nei[i]*w_net + x_nei[3]], dx);
+        }
+        cubic_interpolation(value_this, temp[0], temp[1], temp[2], temp[3], dy);
+        if(part != 14){
+          if(value_this > value) 
+            value = value_this;
+        } else {
+          if(value_this < value) 
+            value = value_this;
+        }
+      }
+    }
+    float c[3];
+    getColor(c, value, 0, 1);
+    b = 0.5 * b + 0.5 * c[0];
+    g = 0.5 * g + 0.5 * c[1];
+    r = 0.5 * r + 0.5 * c[2];
+
+    dst_pointer[                          y * w_canvas + x] = b; //plot dot
+    dst_pointer[    w_canvas * h_canvas + y * w_canvas + x] = g;
+    dst_pointer[2 * w_canvas * h_canvas + y * w_canvas + x] = r;
+    // if(x==0 && y==0){
+    //   printf("exiting\n");
+    // }
+  }
+}
+
+
 __global__ void render_pose_website_heatmap(float* dst_pointer, int w_canvas, int h_canvas, float ratio_to_origin, 
                              float* centers, float* heatmaps, int boxsize, 
                              int num_people, float threshold, int part){
@@ -434,6 +702,7 @@ __global__ void render_pose_website_heatmap(float* dst_pointer, int w_canvas, in
   }
 }
 
+
 __global__ void render_pose_website_heatmap_empty(float* dst_pointer, int w_canvas, int h_canvas){
   int x = (blockIdx.x * blockDim.x) + threadIdx.x;
   int y = (blockIdx.y * blockDim.y) + threadIdx.y;
@@ -452,87 +721,6 @@ __global__ void render_pose_website_heatmap_empty(float* dst_pointer, int w_canv
   }
 }
 
-
-// ***** normal function *****
-
-void fill_pose_net(const float* image, int width, int height, 
-                   float* dst, int boxsize, 
-                   const float* peak_pointer_gpu, vector<int> num_people, int limit){
-  //image            in width * height * 3 * N
-  //dst              in boxsize * boxsize * 4 * (P1+P2+...+PN)
-  //peak_pointer_gpu in 2 * 11 * 1 * N
-  //num_people has length P, indicating P1, ..., PN
-
-  int N = num_people.size();
-  int count = 0;
-  bool full = false;
-  int offset_src = width * height * 3;
-  int offset_dst_2 = boxsize * boxsize;
-  int offset_info = 22;
-  dim3 threadsPerBlock(numThreadsPerBlock_1d, numThreadsPerBlock_1d);
-  dim3 numBlocks(updiv(boxsize, threadsPerBlock.x), updiv(boxsize, threadsPerBlock.y));
-
-  for(int i = 0; i < N; i++){
-    //LOG(ERROR) << "copying " << num_people[i] << " people.";
-    for(int p = 0; p < num_people[i]; p++){
-      fill_image<<<threadsPerBlock, numBlocks>>>(image + i * offset_src, width, height, 
-                                                 dst + count * (4 * offset_dst_2), boxsize, 
-                                                 peak_pointer_gpu + i * offset_info, p);
-      //src, w, h, dst, boxsize, info, p
-      
-      fill_gassian<<<threadsPerBlock, numBlocks>>>(dst + count * (4 * offset_dst_2) + 3 * offset_dst_2, boxsize, 21);
-      //dst, boxsize
-
-      count++;
-      if(count >= limit){
-        full = true;
-        break;
-      }
-    }
-    if(full) break;
-  }
-  cudaDeviceSynchronize();
-}
-
-
-void render_in_cuda(float* canvas, float* image, int w, int h, 
-                    float* heatmaps, int boxsize, 
-                    float* centers, float* poses, vector<int> num_people){
-  //canvas, image    in width * height * 3 * N
-  //heatmaps         in boxsize * boxsize * 15 * (P1+P2+...+PN)
-  //centers          in 2 * 11 * 1 * N
-  //poses            in 3 * 1 * 15 * (P1+P2+...+PN)
-  //num_people has length P, indicating P1, ..., PN
-
-  int N = num_people.size();
-  //LOG(ERROR) << "Number of frames in batch: " << N;
-  //int count = 0;
-  int offset_person = w * h * 3; // 3 because we only render one image here
-  //int offset_pose_2 = boxsize * boxsize;
-  int offset_info = 22;
-  int offset_pose = 45;
-  float threshold = 0.15;
-  int offset_pose_so_far = 0;
-
-  dim3 threadsPerBlock(numThreadsPerBlock_1d, numThreadsPerBlock_1d);
-  dim3 numBlocks(updiv(w, threadsPerBlock.x), updiv(h, threadsPerBlock.y));
-
-  for(int i = 0; i < N; i++){
-    int num_people_this_frame = num_people[i];
-    //LOG(ERROR) << "num_people_this_frame: " << num_people_this_frame;
-    
-    render_pose<<<threadsPerBlock, numBlocks>>>(canvas+i*offset_person, image+i*offset_person, w, h, 
-                                                centers+i*offset_info, poses+offset_pose_so_far, boxsize, 
-                                                num_people_this_frame, threshold);
-
-    //LOG(ERROR) << "num_people[i] = " << num_people[i];
-    cudaDeviceSynchronize();
-    offset_pose_so_far += offset_pose * num_people[i];
-  }
-  //
-  //LOG(ERROR) << "render_done";
-}
-
 void render_in_cuda_website(float* canvas, int w_canvas, int h_canvas, int w_net, int h_net, 
                     float* heatmaps, int boxsize, 
                     float* centers, float* poses, vector<int> num_people){
@@ -546,7 +734,7 @@ void render_in_cuda_website(float* canvas, int w_canvas, int h_canvas, int w_net
   //LOG(ERROR) << "Number of frames in batch: " << N;
   //int count = 0;
   int offset_canvas = w_canvas * h_canvas * 3; // 3 because we only render one image here
-  //int offset_pose_2 = boxsize * boxsize;
+  int offset_pose_2 = boxsize * boxsize;
   int offset_heatmap = boxsize * boxsize * 15;
   int offset_info = 22;
   int offset_pose = 45;
@@ -583,10 +771,9 @@ void render_in_cuda_website(float* canvas, int w_canvas, int h_canvas, int w_net
 
 
 void render_in_cuda_website_indi(float* canvas, int w_canvas, int h_canvas, int w_net, int h_net, 
-                    float* heatmaps, int boxsize, 
-                    float* centers, float* poses, vector<int> num_people, int part){
+                    float* heatmaps, int boxsize, float* centers, float* poses, vector<int> num_people, int part){
   //canvas, image    in width * height * 3 * N
-  //heatmaps         in boxsize * boxsize * 15 * (P1+P2+...+PN)
+  //heatmaps         in w_net * h_net * 15 * (P1+P2+...+PN)
   //centers          in 2 * 11 * 1 * N
   //poses            in 3 * 1 * 15 * (P1+P2+...+PN)
   //num_people has length P, indicating P1, ..., PN
@@ -594,10 +781,9 @@ void render_in_cuda_website_indi(float* canvas, int w_canvas, int h_canvas, int 
   int N = num_people.size(); //batch size
   //LOG(ERROR) << "Number of frames in batch: " << N;
   //int count = 0;
-  //int offset_canvas = w_canvas * h_canvas * 3; // 3 because we only render one image here
-  //int offset_pose_2 = boxsize * boxsize;
-  int offset_heatmap = boxsize * boxsize * 15;
-  int offset_info = 22;
+  int offset_canvas = w_canvas * h_canvas * 3; // 3 because we only render one image here
+  int offset_heatmap = w_net * h_net * 15; // boxsize * boxsize * 15
+  int offset_info = 33; //22
   int offset_pose = 45;
   float threshold = 0.15;
   int offset_pose_so_far = 0;
@@ -613,14 +799,18 @@ void render_in_cuda_website_indi(float* canvas, int w_canvas, int h_canvas, int 
     
     if(num_people_this_frame != 0){
       if(part == 0){
-        render_pose_website<<<threadsPerBlock, numBlocks>>>(canvas, w_canvas, h_canvas, ratio_to_origin,
-                                                            centers+i*offset_info, poses+offset_pose_so_far, boxsize, 
+        // render_pose_website<<<threadsPerBlock, numBlocks>>>
+        LOG(ERROR) << "num_people_this_frame: " << num_people_this_frame << " ratio_to_origin: " << ratio_to_origin;
+        render_pose_29parts<<<threadsPerBlock, numBlocks>>>(canvas, w_canvas, h_canvas, ratio_to_origin,
+                                                            poses+offset_pose_so_far, boxsize, 
                                                             num_people_this_frame, threshold);
       }
       else if (part > 0) {
-        render_pose_website_heatmap<<<threadsPerBlock, numBlocks>>>(canvas, w_canvas, h_canvas, ratio_to_origin,
-                                                          centers+i*offset_info, heatmaps+offset_heatmap_so_far, boxsize, 
-                                                          num_people_this_frame, threshold, part-1);
+        //render_pose_website_heatmap<<<threadsPerBlock, numBlocks>>>
+        //LOG(ERROR) << "GPU part num: " << part-1;
+        render_pose_29parts_heatmap<<<threadsPerBlock, numBlocks>>>(canvas, w_canvas, h_canvas, w_net, h_net,
+                                                          heatmaps+offset_heatmap_so_far, num_people_this_frame,
+                                                          part-1);
       }
     } else {
       if (part > 0) 
@@ -635,13 +825,6 @@ void render_in_cuda_website_indi(float* canvas, int w_canvas, int h_canvas, int 
   //
   //LOG(ERROR) << "render_done";
 }
-
-
-
-
-
-
-
 
 
 template <>
@@ -1005,6 +1188,22 @@ DEFINE_AND_INSTANTIATE_GPU_UNARY_FUNC(sign, y[index] = (Dtype(0) < x[index])
                                       - (x[index] < Dtype(0)));
 DEFINE_AND_INSTANTIATE_GPU_UNARY_FUNC(sgnbit, y[index] = signbit(x[index]));
 
+__global__ void popc_kernel(const int n, const float* a,
+    const float* b, uint8_t* y) {
+  CUDA_KERNEL_LOOP(index, n) {
+    y[index] = __popc(static_cast<uint32_t>(a[index]) ^
+                      static_cast<uint32_t>(b[index]));
+  }
+}
+
+__global__ void popcll_kernel(const int n, const double* a,
+    const double* b, uint8_t* y) {
+  CUDA_KERNEL_LOOP(index, n) {
+    y[index] = __popcll(static_cast<uint64_t>(a[index]) ^
+                      static_cast<uint64_t>(b[index]));
+  }
+}
+
 void caffe_gpu_rng_uniform(const int n, unsigned int* r) {
   CURAND_CHECK(curandGenerate(Caffe::curand_generator(), r, n));
 }
@@ -1048,5 +1247,9 @@ void caffe_gpu_rng_gaussian(const int n, const double mu, const double sigma,
   CURAND_CHECK(
       curandGenerateNormalDouble(Caffe::curand_generator(), r, n, mu, sigma));
 }
+
+
+
+
 
 }  // namespace caffe

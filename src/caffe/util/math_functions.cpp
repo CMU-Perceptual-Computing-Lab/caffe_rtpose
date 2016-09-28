@@ -9,10 +9,6 @@
 
 namespace caffe {
 
-int updiv(int a, int b){
-  return (a+b-1)/b;
-}
-
 template<>
 void caffe_cpu_gemm<float>(const CBLAS_TRANSPOSE TransA,
     const CBLAS_TRANSPOSE TransB, const int M, const int N, const int K,

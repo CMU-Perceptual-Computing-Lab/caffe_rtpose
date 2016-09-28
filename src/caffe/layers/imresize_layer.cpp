@@ -1,35 +1,36 @@
 #include <vector>
-using namespace std;
-
 #include "caffe/layers/imresize_layer.hpp"
 #include <opencv2/core/core.hpp>
 #include <opencv2/contrib/contrib.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/opencv.hpp>
 
+using namespace std;
 using namespace cv;
 
 namespace caffe {
 
-template<typename Dtype>
+template <typename Dtype>
 void ImResizeLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top){
 	ImResizeParameter imresize_param = this->layer_param_.imresize_param();
 	targetSpatialWidth = imresize_param.target_spatial_width(); //temporarily
 	targetSpatialHeight = imresize_param.target_spatial_height();
 }
 
-template<typename Dtype>
+template <typename Dtype>
 void ImResizeLayer<Dtype>::setTargetDimenions(int nw, int nh){
 	targetSpatialWidth = nw;
 	targetSpatialHeight = nh;
 }
 
-template<typename Dtype>
+template <typename Dtype>
 void ImResizeLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top){
 	vector<int> bottom_shape = bottom[0]->shape();
 	vector<int> top_shape(bottom_shape);
 
 	ImResizeParameter imresize_param = this->layer_param_.imresize_param();
+	start_scale = imresize_param.start_scale();
+	scale_gap = imresize_param.scale_gap();
 	if(imresize_param.factor() != 0){
 		top_shape[3] = top_shape[3] * imresize_param.factor();
 		top_shape[2] = top_shape[2] * imresize_param.factor();
@@ -39,10 +40,11 @@ void ImResizeLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom, const vec
 		top_shape[3] = targetSpatialWidth;
 		top_shape[2] = targetSpatialHeight;
 	}
+	top_shape[0] = 1;
 	top[0]->Reshape(top_shape);
 }
 
-template<typename Dtype>
+template <typename Dtype>
 void ImResizeLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top){
 	int num = bottom[0]->shape(0);
 	int channel = bottom[0]->shape(1);

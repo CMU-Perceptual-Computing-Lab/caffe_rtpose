@@ -17,6 +17,7 @@ inline __device__ void cubic_interpolation(Dtype &out, Dtype &v0, Dtype &v1, Dty
          + v1;
 }
 
+
 template <typename Dtype>
 __global__ void imresize_cubic_kernel(Dtype* src_pointer, Dtype* dst_pointer, 
 	                                  int ow, int oh, int tw, int th){
@@ -92,6 +93,67 @@ __global__ void imresize_cubic_kernel(Dtype* src_pointer, Dtype* dst_pointer,
 	}
 }
 
+
+
+template <typename Dtype>
+__global__ void imresize_cubic_kernel(Dtype* src_ptr, Dtype* dst_pointer, int src_offset, int num, float scale_gap, 
+									  float start_scale, int oriSpatialWidth, int oriSpatialHeight, int tw, int th){
+	// get pixel location (x,y)
+	int x = (blockIdx.x * blockDim.x) + threadIdx.x;
+	int y = (blockIdx.y * blockDim.y) + threadIdx.y;
+
+	// begin compute
+	if(x < tw && y < th) {
+		Dtype d_temp = 0;
+		Dtype sum = 0;
+		for(int n = 0; n < num; n++){
+			int padw = floor(oriSpatialWidth /2 * (1-start_scale + n * scale_gap) ); //n
+			int padh = floor(oriSpatialHeight /2 * (1-start_scale + n * scale_gap) );
+			int ow = oriSpatialWidth - 2*padw;
+			int oh = oriSpatialHeight - 2*padh;
+			//LOG(ERROR) << "GPU padw " << padw << " padh " << padh;
+			Dtype* src_pointer = src_ptr + n * src_offset;
+
+			float offset_x = tw/float(ow)/2 - 0.5;
+			float offset_y = th/float(oh)/2 - 0.5;
+			float x_on_ori = (x - offset_x) * (float(ow) / tw);  //3.5 is for 8x enlarge
+			float y_on_ori = (y - offset_y) * (float(oh) / th);
+
+			int x_nei[4];
+			x_nei[1] = int(x_on_ori + 1e-5);
+			x_nei[1] = (x_nei[1] < 0) ? 0 : x_nei[1];
+			x_nei[0] = ((x_nei[1] - 1 < 0) ? x_nei[1] : (x_nei[1] - 1)) + padw;
+			x_nei[2] = (x_nei[1] + 1 >= ow) ? (ow - 1) : (x_nei[1] + 1);
+			x_nei[3] = ((x_nei[2] + 1 >= ow) ? (ow - 1) : (x_nei[2] + 1)) + padw;
+			float dx = x_on_ori - x_nei[1];
+			x_nei[1] = x_nei[1] + padw;
+			x_nei[2] = x_nei[2] + padw;
+
+			int y_nei[4];
+			y_nei[1] = int(y_on_ori + 1e-5);
+			y_nei[1] = (y_nei[1] < 0) ? 0 : y_nei[1];
+			y_nei[0] = ((y_nei[1] - 1 < 0) ? y_nei[1] : (y_nei[1] - 1)) + padh;
+			y_nei[2] = (y_nei[1] + 1 >= oh) ? (oh - 1) : (y_nei[1] + 1);
+			y_nei[3] = ((y_nei[2] + 1 >= oh) ? (oh - 1) : (y_nei[2] + 1)) + padh;
+			float dy = y_on_ori - y_nei[1];
+			y_nei[1] = y_nei[1] + padh;
+			y_nei[2] = y_nei[2] + padh;
+
+			Dtype temp[4];
+			for(int i = 0; i < 4; i++){
+				cubic_interpolation(temp[i], src_pointer[y_nei[i]*(ow+2*padw) + x_nei[0]], 
+					                         src_pointer[y_nei[i]*(ow+2*padw) + x_nei[1]], 
+					                         src_pointer[y_nei[i]*(ow+2*padw)+ x_nei[2]],
+					                         src_pointer[y_nei[i]*(ow+2*padw) + x_nei[3]], dx);
+			}
+			//cubic_interpolation(dst_pointer[y*tw+x], temp[0], temp[1], temp[2], temp[3], dy);
+			cubic_interpolation(d_temp, temp[0], temp[1], temp[2], temp[3], dy);
+			sum = sum + d_temp;
+		}
+		dst_pointer[y*tw+x] = sum / num;
+	}
+}
+
 template <typename Dtype>
 void ImResizeLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top){
 	//Forward_cpu(bottom, top);
@@ -100,10 +162,10 @@ void ImResizeLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom, const
 	Dtype* dst_pointer = top[0]->mutable_gpu_data();
 	int oriSpatialHeight = bottom[0]->shape(2);
 	int oriSpatialWidth = bottom[0]->shape(3);
-	int num = bottom[0]->shape(0);
+	int num = bottom[0]->shape(0); //scale number
 	int channel = bottom[0]->shape(1);
-	//	targetSpatialWidth
-	//  targetSpatialHeight
+	//LOG(ERROR) << "GPU num " << num << " channel " << channel;
+	//LOG(ERROR) << "top[0] " << top[0]->shape(0) << " top[0]->shape(1) " << top[0]->shape(1);
 
 	dim3 threadsPerBlock(numThreadsPerBlock_1d, numThreadsPerBlock_1d);
 	dim3 numBlocks(updiv(targetSpatialWidth, threadsPerBlock.x), updiv(targetSpatialHeight, threadsPerBlock.y));
@@ -112,14 +174,21 @@ void ImResizeLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom, const
 	//int sm_width = numThreadsPerBlock_1d / (float(targetSpatialWidth) / oriSpatialWidth) + 3;
 	//int sm_height = numThreadsPerBlock_1d / (float(targetSpatialHeight) / oriSpatialHeight) + 3;
 
-	for(int n = 0; n < num; n++){
+	
 		for(int c = 0; c < channel; c++){
-			imresize_cubic_kernel<<<numBlocks, threadsPerBlock>>>(src_pointer + (n * channel + c) * offset_src, 
-				                                                dst_pointer + (n * channel + c) * offset_dst, 
-				                                    			oriSpatialWidth, oriSpatialHeight, 
+			// imresize_cubic_kernel<<<numBlocks, threadsPerBlock>>>(src_pointer + (n * channel + c) * offset_src, 
+			// 	                                                dst_pointer + (n * channel + c) * offset_dst, 
+			// 	                                    			oriSpatialWidth, oriSpatialHeight,
+			// 	                                    			targetSpatialWidth, targetSpatialHeight);
+			imresize_cubic_kernel<<<numBlocks, threadsPerBlock>>>(src_pointer + c * offset_src, dst_pointer + c * offset_dst, 
+																channel* offset_src, num, scale_gap, start_scale, 
+				                                    			oriSpatialWidth, oriSpatialHeight,
 				                                    			targetSpatialWidth, targetSpatialHeight);
+			//LOG(ERROR) << "GPU oriSpatialHeight - 2*padh " << oriSpatialHeight - 2*padh;
 		}
-	}
+
+		//fuse_kernel<<<numBlocks, threadsPerBlock>>>(src_pointer + (n * channel + c) * offset_src, 
+		//		                                                targetSpatialWidth, targetSpatialHeight);
 }
 
 template <typename Dtype>

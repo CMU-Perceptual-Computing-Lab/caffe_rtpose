@@ -16,27 +16,28 @@ void NmsLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom, const vector<B
 	vector<int> bottom_shape = bottom[0]->shape();
 	vector<int> top_shape(bottom_shape);
 
-	int num_peak = this->layer_param_.nms_param().num_peak();
 	top_shape[3] = 3;  // X, Y, score
-	top_shape[2] = num_peak + 1; // 30 people + 1
-	top_shape[1] = 1;
+	top_shape[2] = 11; // 10 people + 1
+	top_shape[1] = 15;
 	
 	top[0]->Reshape(top_shape);
 	workspace.Reshape(bottom_shape);
+
+	//std::cout << "cpu here!" << std::endl;
 }
 
 template <typename Dtype>
 void NmsLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top){
-	int num_peak = this->layer_param_.nms_param().num_peak();
 	int num = bottom[0]->shape(0);
 	//int channel = bottom[0]->shape(1);
+	//std::cout << "cpu here!" << std::endl;
 	int oriSpatialHeight = bottom[0]->shape(2);
 	int oriSpatialWidth = bottom[0]->shape(3);
 
 	Dtype* dst_pointer = top[0]->mutable_cpu_data();
 	Dtype* src_pointer = bottom[0]->mutable_cpu_data();
 	int offset2 = oriSpatialHeight * oriSpatialWidth;
-	int offset2_dst = 3 * (num_peak + 1);
+	int offset2_dst = 22;
 
 	//stupid method
 	for(int n = 0; n < num; n++){
@@ -52,9 +53,8 @@ void NmsLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom, const vect
 			    Dtype left = (x == 0) ? 0 : src_pointer[n * offset2 + y*oriSpatialWidth + (x-1)];
 			    Dtype right = (x == oriSpatialWidth - 1) ? 0 : src_pointer[n * offset2 + y*oriSpatialWidth + (x+1)];
 			    if(value > top && value > bottom && value > left && value > right){
-			    	dst_pointer[n*offset2_dst + (peakCount + 1) * 3] = x;
-			    	dst_pointer[n*offset2_dst + (peakCount + 1) * 3 + 1] = y;
-			    	dst_pointer[n*offset2_dst + (peakCount + 1) * 3 + 2] = value;
+			    	dst_pointer[n*offset2_dst + (peakCount + 1) * 2] = x;
+			    	dst_pointer[n*offset2_dst + (peakCount + 1) * 2 + 1] = y;
 			    	peakCount++;
 			    }
 			}

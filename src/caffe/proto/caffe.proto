@@ -574,12 +574,6 @@ message TransformationParameter {
   optional bool per_part_scale = 44 [default = false];
 }
 
-message ImResizeParameter {
-  optional uint32 target_spatial_width = 1 [default = 368];
-  optional uint32 target_spatial_height = 2 [default = 368];
-  optional float factor = 3 [default = 0];
-}
-
 message RenderParameter {
   optional uint32 num_output = 1 [default = 3];
 }
@@ -587,6 +581,14 @@ message RenderParameter {
 message NmsParameter {
   optional float threshold = 1 [default = 0.5];
   optional uint32 num_peak = 2 [default = 100];
+}
+
+message ImResizeParameter {
+  optional uint32 target_spatial_width = 1 [default = 368];
+  optional uint32 target_spatial_height = 2 [default = 368];
+  optional float factor = 3 [default = 0];
+  optional float start_scale = 4 [default = 1];
+  optional float scale_gap = 5 [default = 0.1];
 }
 
 // Message that stores parameters shared by loss layers

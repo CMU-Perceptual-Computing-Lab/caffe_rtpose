@@ -34,6 +34,9 @@ class ImResizeLayer : public Layer<Dtype> {
 
   int targetSpatialWidth;
   int targetSpatialHeight;
+  float factor;
+  float start_scale;
+  float scale_gap;
 };
 
 }

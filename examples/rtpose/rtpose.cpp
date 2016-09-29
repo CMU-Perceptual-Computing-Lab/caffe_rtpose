@@ -50,6 +50,8 @@ using namespace cv;
 
 DEFINE_int32(camera, 0,
 						 "The camera index for VideoCapture.");
+DEFINE_string(video, "",
+						 "Use a video file instead of the camera.");
 DEFINE_bool(fullscreen, false,
 						 "Run in fullscreen mode");
 DEFINE_string(caffemodel, "model/pose_iter_264000.caffemodel",
@@ -59,13 +61,17 @@ DEFINE_string(caffeproto, "model/pose_deploy_linevec.prototxt",
 
 DEFINE_string(resolution, "960x540",
 						 "The image resolution to run the detector on.");
+
+DEFINE_int32(start_device, 0,
+						 "GPU device start number.");
+
 // These are set to match FLAGS_resolution
-int origin_height=540; //540 //720 //480
 int origin_width=960; //960 //1280 //640
+int origin_height=540; //540 //720 //480
 
 // These control the size of the frame requested from VideoCapture
-#define CAMERA_FRAME_WIDTH 960
-#define CAMERA_FRAME_HEIGHT 540
+#define CAMERA_FRAME_WIDTH 1920
+#define CAMERA_FRAME_HEIGHT 1080
 
 #define INIT_TOTAL_NUM_PEOPLE 4
 #define boxsize 368
@@ -78,12 +84,11 @@ int origin_width=960; //960 //1280 //640
 #define MAX_LENGTH_INPUT_QUEUE 500 //affects memory usage
 #define FPS_SRC 30
 #define batch_size 1
+#define MAX_PEOPLE 20
 
 float start_scale = 0.9;
 int NUM_GPU;  //4
 double INIT_TIME = -999;
-
-bool g_quit_threads = false;
 
 //person detector
 string person_detector_caffemodel;
@@ -117,6 +122,12 @@ struct GLOBAL {
 	int part_to_show;
 	float target_size[1][2];
 	bool quit_threads;
+
+	struct UIState {
+		UIState() : is_fullscreen(0) {}
+		bool is_fullscreen;
+	};
+	UIState uistate;
  };
 
 struct ColumnCompare
@@ -192,7 +203,7 @@ void warmup(int device_id){
 	//nc[device_id].pose_net->ForwardFrom(0);
 
 	cudaMalloc(&nc[device_id].canvas, origin_width * origin_height * 3 * sizeof(float));
-	cudaMalloc(&nc[device_id].joints, 450 * sizeof(float) );
+	cudaMalloc(&nc[device_id].joints, 45*MAX_PEOPLE * sizeof(float) );
 }
 
 void process_and_pad_image(float* target, Mat oriImg, int tw, int th, bool normalize){
@@ -256,17 +267,38 @@ void render(int gid) {
 
 void* getFrameFromCam(void *i){
 
-	VideoCapture cap;
-	CHECK(cap.open(FLAGS_camera)) << "Couldn't open camera " << FLAGS_camera;
-  cap.set(CV_CAP_PROP_FRAME_WIDTH,CAMERA_FRAME_WIDTH);
-	cap.set(CV_CAP_PROP_FRAME_HEIGHT,CAMERA_FRAME_HEIGHT);
+		VideoCapture cap;
+		if (FLAGS_video.empty()) {
+			CHECK(cap.open(FLAGS_camera)) << "Couldn't open camera " << FLAGS_camera;
+			cap.set(CV_CAP_PROP_FRAME_WIDTH,CAMERA_FRAME_WIDTH);
+			cap.set(CV_CAP_PROP_FRAME_HEIGHT,CAMERA_FRAME_HEIGHT);
+		} else {
+			CHECK(cap.open(FLAGS_video)) << "Couldn't open video file " << FLAGS_video;
+		}
 
     int global_counter = 1;
+		int frame_counter = 0;
+		Mat image_uchar;
     while(1) {
 			if (global.quit_threads) break;
 
-			Mat image_uchar;
 			cap >> image_uchar;
+
+			// Keep a count of how many frames we've seen
+			if (!FLAGS_video.empty()) {
+				frame_counter = cap.get(CV_CAP_PROP_POS_FRAMES);
+			}
+
+			// If we reach the end of a video, loop
+			if (!FLAGS_video.empty()) {
+				if (frame_counter >= cap.get(CV_CAP_PROP_FRAME_COUNT)) {
+					LOG(INFO) << "Looping video after " << frame_counter-1 << " frames";
+			    cap.set(CV_CAP_PROP_POS_FRAMES, 0);
+				}
+			} else {
+				frame_counter++;
+			}
+
 			resize(image_uchar, image_uchar, Size(origin_width, origin_height), 0, 0, CV_INTER_AREA);
 
   		//char imgname[50];
@@ -565,7 +597,7 @@ void* processFrame(void *i){
 		            float s_y = candA[i*3+1];
 		            float d_x = candB[j*3] - candA[i*3];
 		            float d_y = candB[j*3+1] - candA[i*3+1];
-					float norm_vec = sqrt( pow(d_x,2) + pow(d_y,2) );
+								float norm_vec = sqrt( pow(d_x,2) + pow(d_y,2) );
 		            float vec_x = d_x/norm_vec;
 		            float vec_y = d_y/norm_vec;
 
@@ -711,7 +743,7 @@ void* processFrame(void *i){
 
 		//** joints by deleteing some rows of subset which has few parts occur
 		//cout << " joints " << endl;
-		float joints[450]; //10*15*3
+		float joints[45*MAX_PEOPLE]; //10*15*3
 		int cnt = 0;
 		for(int i = 0; i < subset.size(); i++){
 			//cout << "score: " << i << " " << subset[i][16]/subset[i][17];
@@ -740,7 +772,7 @@ void* processFrame(void *i){
 		nc[tid].num_people[0] = cnt;
 		LOG(ERROR) << "num_people[i] = " << cnt;
 
-		cudaMemcpy(nc[tid].joints, joints, 450 * sizeof(float), cudaMemcpyHostToDevice);
+		cudaMemcpy(nc[tid].joints, joints, 45*MAX_PEOPLE * sizeof(float), cudaMemcpyHostToDevice);
 
 		// debug, wrong!
 		// float *h_out = (float *) malloc(450 * sizeof(float) );
@@ -923,13 +955,14 @@ void* displayFrame(void *i) { //single thread
   double this_time;
   float FPS = 0;
 
+	//Mat resized_frame;
 	while(1) {
 		if (global.quit_threads) break;
 
 		f = global.output_queue_ordered.pop();
 		Mat wrap_frame(origin_height, origin_width, CV_8UC3, f.data_for_wrap);
-
 		//LOG(ERROR) << "processed";
+		//cv::resize(wrap_frame, resized_frame, Size(1920, 1080), 0, 0, CV_INTER_LINEAR);
 		imshow("video", wrap_frame);
 
 		counter++;
@@ -938,7 +971,6 @@ void* displayFrame(void *i) { //single thread
       //LOG(ERROR) << frame.cols << "  " << frame.rows;
       FPS = 30.0f / (this_time - last_time);
       last_time = this_time;
-
       char msg[1000];
 			sprintf(msg, "# %d, NP %d, Latency %.3f, Preprocess %.3f, QueueA %.3f, GPU %.3f, QueueB %.3f, Postproc %.3f, QueueC %.3f, Buffered %.3f, QueueD %.3f, FPS = %.1f",
                   f.index, f.numPeople,
@@ -996,7 +1028,7 @@ int rtcpm() {
 	pthread_t gpu_threads_pool[NUM_GPU];
 	for(int gpu = 0; gpu < NUM_GPU; gpu++){
 		int *arg = new int[1];
-		*arg = gpu;
+		*arg = gpu+FLAGS_start_device;
 		int rc = pthread_create(&gpu_threads_pool[gpu], NULL, processFrame, (void *) arg);
 		if(rc){
 			LOG(ERROR) << "Error:unable to create thread," << rc << "\n";
@@ -1008,11 +1040,15 @@ int rtcpm() {
 
 	usleep(10 * 1e6);
 	if (FLAGS_fullscreen) {
-		cv::namedWindow("video", CV_WINDOW_NORMAL);
+		cv::namedWindow("video", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
 		cv::resizeWindow("video", 1920, 1080);
 		cv::setWindowProperty("video", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN);
+		global.uistate.is_fullscreen = true;
 	} else {
-		cv::namedWindow("video", CV_WINDOW_AUTOSIZE);
+		cv::namedWindow("video", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+		cv::setWindowProperty("video", CV_WND_PROP_FULLSCREEN, CV_WINDOW_NORMAL);
+		cv::resizeWindow("video", origin_width, origin_height);
+		global.uistate.is_fullscreen = false;
 	}
 	/* push all frames for now (single thread)
 	for(int i = 1; i <= 449; i++){
@@ -1264,17 +1300,29 @@ int main(int argc, char *argv[]) {
 }
 
 bool handleKey(int c) {
-	if (c==27) {
+	const std::string key2part = "0123456789qwerty";
+
+	if (c==27 || c=='q') {
 		global.quit_threads = true;
 		return false;
 	}
-	int target;
-	if(c >= 48 && c <= 57){
-		target = c - 48; // 0 ~ 9
-	} else if (c >= 97 && c <= 102){
-		target = 10 + (c - 97);
-	} else {
-		target = -1;
+	int target = -1;
+	int ind = key2part.find(c);
+	if (ind!=string::npos) {
+		target = ind;
+	}
+	if (c=='f') {
+		if (!global.uistate.is_fullscreen) {
+			cv::namedWindow("video", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+			cv::resizeWindow("video", 1920, 1080);
+			cv::setWindowProperty("video", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN);
+			global.uistate.is_fullscreen = true;
+		} else {
+			cv::namedWindow("video", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+			cv::setWindowProperty("video", CV_WND_PROP_FULLSCREEN, CV_WINDOW_NORMAL);
+			cv::resizeWindow("video", origin_width, origin_height);
+			global.uistate.is_fullscreen = false;
+		}
 	}
 	if(target >= 0 && target <= 16) {
 		global.part_to_show = target;

@@ -4,7 +4,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h> 
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <signal.h>
@@ -23,7 +23,6 @@
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/util/db.hpp"
 #include "caffe/util/io.hpp"
-#include "caffe/vision_layers.hpp"
 #include "caffe/util/benchmark.hpp"
 #include "caffe/util/blocking_queue.hpp"
 
@@ -35,7 +34,7 @@
 #include <cstdio>
 #include <ctime>
 #include <chrono>
-#include <mutex> 
+#include <mutex>
 
 using caffe::Blob;
 using caffe::Caffe;
@@ -89,7 +88,7 @@ struct NET_COPY {
 // global queues for I/O
 struct GLOBAL {
 	caffe::BlockingQueue<Frame> input_queue; //have to pop
-	caffe::BlockingQueue<pair<int, string> > frame_file_queue; 
+	caffe::BlockingQueue<pair<int, string> > frame_file_queue;
 	caffe::BlockingQueue<Frame> output_queue; //have to pop
 	caffe::BlockingQueue<Frame> output_queue_ordered;
 	caffe::BlockingQueue<Frame> output_queue_mated;
@@ -104,7 +103,7 @@ struct ColumnCompare
     bool operator()(const std::vector<float>& lhs,
                     const std::vector<float>& rhs) const
     {
-        return lhs[2] > rhs[2]; 
+        return lhs[2] > rhs[2];
         //return lhs[0] > rhs[0];
     }
 };
@@ -132,21 +131,21 @@ double get_wall_time(){
 }
 
 void printGlobal(string src){
-	LOG(ERROR) << src << "\t input_queue: " << global.input_queue.size() 
+	LOG(ERROR) << src << "\t input_queue: " << global.input_queue.size()
 	           << " | output_queue: " << global.output_queue.size()
-	           << " | output_queue_ordered: " << global.output_queue_ordered.size() 
+	           << " | output_queue_ordered: " << global.output_queue_ordered.size()
 	           << " | output_queue_mated: " << global.output_queue_mated.size();
 }
 
 void set_nets(){
 	//person_detector_caffemodel = "../model/pose_iter_70000.caffemodel"; //"/media/posenas4b/User/zhe/arch/MPI_exp_caffe/person/model/pose_iter_70000.caffemodel";
 	//person_detector_proto = "../model/pose_deploy_copy_4sg_resize.prototxt"; ///media/posenas4b/User/zhe/arch/MPI_exp_caffe/person/pose_deploy_copy_4sg_resize.prototxt";
-	person_detector_caffemodel = "../model/pose_iter_520000.caffemodel";	// "/media/posenas4b/User/zhe/arch/MPI_exp_caffe/poseDP/exp3/pose_deploy.prototxt"
+	person_detector_caffemodel = "../model/pose_iter_166000.caffemodel";	// "/media/posenas4b/User/zhe/arch/MPI_exp_caffe/poseDP/exp3/pose_deploy.prototxt"
 	person_detector_proto = "../model/pose_deploy_realtime.prototxt"; //_29parts.prototxt"; // "/media/posenas4b/User/zhe/arch/MPI_exp_caffe/poseDP/exp3/model/pose_iter_600000.caffemodel"
 }
 
 void warmup(int device_id){
-	
+
 	LOG(ERROR) << "Setting GPU " << device_id;
 	Caffe::SetDevice(device_id); //cudaSetDevice(device_id) inside
 	Caffe::set_mode(Caffe::GPU); //
@@ -157,7 +156,7 @@ void warmup(int device_id){
 	nc[device_id].nblob_person = nc[device_id].person_net->blob_names().size();
 	nc[device_id].num_people.resize(batch_size);
 
-	vector<int> shape(4); 
+	vector<int> shape(4);
 	shape[0] = batch_size;
 	shape[1] = 3;
 	shape[2] = INIT_PERSON_NET_HEIGHT;
@@ -178,7 +177,7 @@ void process_and_pad_image(float* target, Mat oriImg, int tw, int th, bool norma
 	int ow = oriImg.cols;
 	int oh = oriImg.rows;
 	int offset2_target = tw * th;
-	
+
 	int padw = (tw-ow)/2;
 	int padh = (th-oh)/2;
 	//LOG(ERROR) << " padw " << padw << " padh " << padh;
@@ -224,8 +223,8 @@ void render(int gid) {
 	float* centers;
 	float* heatmaps = nc[gid].person_net->blobs()[nc[gid].nblob_person-2]->mutable_gpu_data();
 	//float* poses    = nc[gid].pose_net->blobs()[nc[gid].nblob_pose-1]->mutable_gpu_data();
-	float* poses    = nc[gid].joints; 
-	
+	float* poses    = nc[gid].joints;
+
 	//LOG(ERROR) << "begin render_in_cuda";
 	//LOG(ERROR) << "CPU part num" << global.part_to_show;
 	caffe::render_in_cuda_website_indi(nc[gid].canvas, origin_width, origin_height, INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT,
@@ -234,7 +233,7 @@ void render(int gid) {
 
 
 void* getFrameFromCam(void *i){
-	
+
 	VideoCapture cap;
     if(!cap.open(0)){
         printf("no cam.\n");
@@ -254,17 +253,17 @@ void* getFrameFromCam(void *i){
 		//sprintf(imgname, "../frame/frame%04d.png", global_counter);
 		//image_uchar = imread(imgname, 1);
 		//sprintf(imgname, "../Ian/hd%08d_00_00.png", global_counter*2 + 3500); //2700
-		
+
 		// sprintf(imgname, "../domeHD/hd%08d_00_07.png", global_counter + 2700); //2700
 		// image_uchar = imread(imgname, 1);
 		// resize(image_uchar, image_uchar, Size(960, 540), 0, 0, CV_INTER_AREA);
 		// //LOG(ERROR) << "global_counter " << global_counter;
-		
+
 		// if(global_counter>=600){  //449 //250
 		// 	imshow("here",image_uchar);
 		// 	waitKey();
 		// }
-		
+
 		waitKey(10); //120 //400
 		if( image_uchar.empty() ) continue;
 
@@ -283,12 +282,12 @@ void* getFrameFromCam(void *i){
 		// 	target_cols = 8 * (target_cols / 8 + 1);
 		// }
 
-		
+
 		// if(INIT_PERSON_NET_WIDTH != target_cols || INIT_PERSON_NET_HEIGHT != target_rows){
 		// 	LOG(ERROR) << "Size not match: " << INIT_PERSON_NET_WIDTH << "  " << target_cols;
 		// 	continue;
 		// }
-		
+
 		//pad and transform to float
 		int offset = 3 * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
 		f.data = new float [batch_size * offset];
@@ -298,14 +297,14 @@ void* getFrameFromCam(void *i){
 		for(int i=0; i < batch_size; i++){
 			float scale = start_scale - i*0.1;
 			target_width = 16 * ceil(INIT_PERSON_NET_WIDTH * scale /16);
-			target_height = 16 * ceil(INIT_PERSON_NET_HEIGHT * scale /16); 
+			target_height = 16 * ceil(INIT_PERSON_NET_HEIGHT * scale /16);
 			//LOG(ERROR) << "target_size[0][0]: " << target_width << " target_size[0][1] " << target_height;
 
 			// int padw, padh;
 			// padw = (INIT_PERSON_NET_WIDTH - target_width)/2;
 			// padh = (INIT_PERSON_NET_HEIGHT - target_height)/2;
 			// LOG(ERROR) << "padw " << padw << " padh " << padh;
-		
+
 			resize(image_uchar, image_temp, Size(target_width, target_height), 0, 0, CV_INTER_AREA);
 			process_and_pad_image(f.data + i * offset, image_temp, INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT, 1);
 		}
@@ -344,7 +343,7 @@ void* processFrame(void *i){
 
 	int offset = INIT_PERSON_NET_WIDTH * INIT_PERSON_NET_HEIGHT * 3;
 	//bool empty = false;
-	
+
 	Frame frame_batch[batch_size];
 
 	//while(!empty){
@@ -396,10 +395,10 @@ void* processFrame(void *i){
 		//cudaDeviceSynchronize();
 		// timer.Stop();
 		// LOG(ERROR) << "Time: " << timer.MicroSeconds() << "us.";
-		
+
 		float* heatmap_pointer = nc[tid].person_net->blobs()[nc[tid].nblob_person-2]->mutable_cpu_data();
 		float* peaks = nc[tid].person_net->blobs()[nc[tid].nblob_person-1]->mutable_cpu_data();
-		
+
 		/* debug ---------------------------------------*/
 		// //vector<int> bottom_shape = nc[tid].person_net->blobs()[nc[tid].nblob_person-3]->shape();
 		// //cout << bottom_shape[0] << " " << bottom_shape[1] << " " << bottom_shape[2] << " " << bottom_shape[3] << " " << endl;
@@ -410,7 +409,7 @@ void* processFrame(void *i){
 		// // 	float* jointsmap = heatmap_ptr + c * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH / 64;
 		// // 	if(c==14)
 		// // 		float* jointsmap = heatmap_ptr + 28 * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH / 64;
-		
+
 		// // 	for (int y = 0; y < INIT_PERSON_NET_HEIGHT/8; y++){
 		// // 		for (int x = 0; x < INIT_PERSON_NET_WIDTH/8; x++){
 		// // 			float num = jointsmap[ y * INIT_PERSON_NET_WIDTH/8 + x]; //0 ~ 1;
@@ -425,7 +424,7 @@ void* processFrame(void *i){
 		// 	float* jointsmap = heatmap_pointer + c * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
 		// 	if(c==14)
 		// 		float* jointsmap = heatmap_pointer + 28 * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
-			
+
 		//     sprintf(filename, "map%02d.txt", c);
 		//     ofstream fout(filename);
 
@@ -449,7 +448,7 @@ void* processFrame(void *i){
 		// 		circle(heatmap, Point2f(peaks[c*33+3*(i+1)], peaks[c*33+3*(i+1)+1]), 2, Scalar(0,0,0), -1);
 		// 		//cout << jointsmap[ int(peaks[c*33+3*(i+1)+1] * INIT_PERSON_NET_WIDTH + peaks[c*33+3*(i+1)]) ] << " ";
 		// 	}
-			
+
 		// 	//cout << "here!" << endl;
 		// 	//imshow("person_map", heatmap);
 		// 	//waitKey();
@@ -462,7 +461,7 @@ void* processFrame(void *i){
 		/* Parts Connection ---------------------------------------*/
 		//limbSeq = [15 2; 2 1; 2 3; 3 4; 4 5; 2 6; 6 7; 7 8; 15 12; 12 13; 13 14; 15 9; 9 10; 10 11];
 		int limbSeq[28] = {14,1, 1,0, 1,2, 2,3, 3,4, 1,5, 5,6, 6,7, 14,11, 11,12, 12,13, 14,8, 8,9, 9,10};
-		int mapIdx[14] = {27, 16, 17, 18, 19, 20, 21, 22, 15, 25, 26, 14, 23, 24};	
+		int mapIdx[14] = {27, 16, 17, 18, 19, 20, 21, 22, 15, 25, 26, 14, 23, 24};
 		vector< vector<float>> subset;
 		vector< vector< vector<float> > > connection;
 
@@ -489,7 +488,7 @@ void* processFrame(void *i){
 		        continue;
 			}
 		    else if(nA ==0){
-		        for(int i = 1; i <= nB; i++){ 
+		        for(int i = 1; i <= nB; i++){
 			        vector<float> row_vec(18, 0);
 			        row_vec[ limbSeq[2*k+1] ] = limbSeq[2*k+1]*33 + i*3 + 2; //store the index
 			        row_vec[17] = 1; //last number in each row is the parts number of that person
@@ -499,7 +498,7 @@ void* processFrame(void *i){
 		        continue;
 		    }
 		    else if(nB ==0){
-		        for(int i = 1; i <= nA; i++){ 
+		        for(int i = 1; i <= nA; i++){
 			        vector<float> row_vec(18, 0);
 			        row_vec[ limbSeq[2*k] ] = limbSeq[2*k]*33 + i*3 + 2; //store the index
 			        row_vec[17] = 1; //last number in each row is the parts number of that person
@@ -530,19 +529,19 @@ void* processFrame(void *i){
 		            	}
 		            }
 		            float score = sum / count + std::min((130/dist-1),0.f);
-		           
+
 		            if(score > 0.15){ //thre/2
 		                // parts score + cpnnection score
 		                vector<float> row_vec(4, 0);
 		                row_vec[3] = score + candA[i*3+2] + candB[j*3+2]; //score_all
 		                row_vec[2] = score;
-		                row_vec[0] = i; 
+		                row_vec[0] = i;
 		                row_vec[1] = j;
-		                temp.push_back(row_vec); 
+		                temp.push_back(row_vec);
 		            }
 		        }
 		    }
-		    
+
 		    //** select the top num connection, assuming that each part occur only once
     		// sort rows in descending order based on parts + connection score
 		    if(temp.size() > 0)
@@ -552,7 +551,7 @@ void* processFrame(void *i){
 		    int cnt = 0;
 		    vector<int> occurA(nA, 0);
 		    vector<int> occurB(nB, 0);
-		    
+
 		    //debug
 		 	// 	if(k==3){
 			//  cout << "connection before" << endl;
@@ -576,10 +575,10 @@ void* processFrame(void *i){
 		            float score = temp[row][2];
 		            if ( occurA[i-1] == 0 && occurB[j-1] == 0 ){ // && score> (1+thre)
 		            	vector<float> row_vec(3, 0);
-		                row_vec[0] = limbSeq[2*k]*33 + i*3 + 2; 
+		                row_vec[0] = limbSeq[2*k]*33 + i*3 + 2;
 		                row_vec[1] = limbSeq[2*k+1]*33 + j*3 + 2;
 		                row_vec[2] = score;
-		                connection_k.push_back(row_vec); 
+		                connection_k.push_back(row_vec);
 		                cnt = cnt+1;
 		                //cout << "cnt: " << connection_k.size() << endl;
 		                occurA[i-1] = 1;
@@ -598,9 +597,9 @@ void* processFrame(void *i){
 			// }
 		    //connection.push_back(connection_k);
 
-		    
+
 		    //** cluster all the joints candidates into subset based on the part connection
-		    // initialize first body part connection 15&16 
+		    // initialize first body part connection 15&16
 		    //cout << connection_k.size() << endl;
 		    if(k==0){
 		    	vector<float> row_vec(18, 0);
@@ -655,7 +654,7 @@ void* processFrame(void *i){
 		//     }
 		//     cout << endl;
 		// }
-	
+
 		//** joints by deleteing some rows of subset which has few parts occur
 		//cout << " joints " << endl;
 		float joints[450]; //10*15*3
@@ -705,7 +704,7 @@ void* processFrame(void *i){
 			render(tid); //only support batch size = 1!!!!
 			for(int n = 0; n < valid_data; n++){
 				frame_batch[n].numPeople = nc[tid].num_people[n];
-				frame_batch[n].gpu_computed_time = get_wall_time();		
+				frame_batch[n].gpu_computed_time = get_wall_time();
 				cudaMemcpy(frame_batch[n].data_for_mat, nc[tid].canvas, origin_height * origin_width * 3 * sizeof(float), cudaMemcpyDeviceToHost);
 				global.output_queue.push(frame_batch[n]);
 
@@ -727,9 +726,9 @@ void* processFrame(void *i){
 		// //copy data to pose_net
 		// timer.Start();
 		//LOG(ERROR) << "GPU " << tid << ": copy to posenet and reshape";
-		
+
 		//copy_to_posenet_and_reshape(tid);
-		
+
 		// timer.Stop();
 		// LOG(ERROR) << "Time: " << timer.MicroSeconds() << "us.";
 
@@ -881,22 +880,22 @@ void* displayFrame(void *i) { //single thread
             last_time = this_time;
 
             char msg[1000];
-			sprintf(msg, "# %d, NP %d, Latency %.3f, Preprocess %.3f, QueueA %.3f, GPU %.3f, QueueB %.3f, Postproc %.3f, QueueC %.3f, Buffered %.3f, QueueD %.3f, FPS = %.1f", 
-			                  f.index, f.numPeople, 
-			                  this_time - f.commit_time, 
-			                  f.preprocessed_time - f.commit_time, 
+			sprintf(msg, "# %d, NP %d, Latency %.3f, Preprocess %.3f, QueueA %.3f, GPU %.3f, QueueB %.3f, Postproc %.3f, QueueC %.3f, Buffered %.3f, QueueD %.3f, FPS = %.1f",
+			                  f.index, f.numPeople,
+			                  this_time - f.commit_time,
+			                  f.preprocessed_time - f.commit_time,
 			                  f.gpu_fetched_time - f.preprocessed_time,
 			                  f.gpu_computed_time - f.gpu_fetched_time,
 			                  f.postprocesse_begin_time - f.gpu_computed_time,
 			                  f.postprocesse_end_time - f.postprocesse_begin_time,
-			                  f.buffer_start_time - f.postprocesse_end_time, 
+			                  f.buffer_start_time - f.postprocesse_end_time,
 			                  f.buffer_end_time - f.buffer_start_time,
-			                  this_time - f.buffer_end_time, 
+			                  this_time - f.buffer_end_time,
 			                  FPS);
 			LOG(ERROR) << msg;
 		}
 
-		
+
 		//LOG(ERROR) << msg;
 		waitKey(1);
 		//LOG(ERROR) << "showed_and_waited";
@@ -913,8 +912,8 @@ void* displayFrame(void *i) { //single thread
 }
 
 void* listenKey(void *i) { //single thread // a b d e f part 10 11 12 13 14
-	
-	int num; 
+
+	int num;
 
 	int c;
 	while(1){
@@ -922,7 +921,7 @@ void* listenKey(void *i) { //single thread // a b d e f part 10 11 12 13 14
 		do {
 			c = getchar();
 			putchar(c);
-			int target; 
+			int target;
 			if(c >= 48 && c <= 57){
 				target = c - 48; // 0 ~ 9
 			} else if (c >= 97 && c <= 102){
@@ -959,7 +958,7 @@ int rtcpm() {
 	usleep(10 * 1e6);
 
 
-	/* push all frames for now (single thread) 
+	/* push all frames for now (single thread)
 	for(int i = 1; i <= 449; i++){
 	 	char name[256];
 	 	sprintf(name, "../frame/frame%04d.png", i);
@@ -981,7 +980,7 @@ int rtcpm() {
 			exit(-1);
 	    }
 	}
-	LOG(ERROR) << "Finish spawning " << thread_pool_size << " threads. now waiting." << "\n"; 
+	LOG(ERROR) << "Finish spawning " << thread_pool_size << " threads. now waiting." << "\n";
 
 
 	/* threads handling outputs */
@@ -1077,7 +1076,7 @@ void putGaussianMaps(float* entry, Point2f center, int stride, int grid_x, int g
         continue;
       }
       entry[g_y*grid_x + g_x] += exp(-exponent);
-      if(entry[g_y*grid_x + g_x] > 1) 
+      if(entry[g_y*grid_x + g_x] > 1)
         entry[g_y*grid_x + g_x] = 1;
     }
   }
@@ -1085,13 +1084,13 @@ void putGaussianMaps(float* entry, Point2f center, int stride, int grid_x, int g
 
 void dostuff (int sock) {
 	/******** DOSTUFF() *********************
-	There is a separate instance of this function 
+	There is a separate instance of this function
 	for each connection.  It handles all communication
 	once a connnection has been established.
 	*****************************************/
 	int n;
 	char buffer[256];
-	  
+
 	bzero(buffer,256);
 	n = read(sock,buffer,255);
 	if (n < 0) error("ERROR reading from socket");
@@ -1122,13 +1121,13 @@ void error(const char *msg){
 // 	batch_size = atoi(argv[2]); //1
 
 int main() {
-	NUM_GPU = 1; 
+	NUM_GPU = 1;
 
 	/* server warming up */
 	set_nets();
 	//warmup();
 	::google::InitGoogleLogging("rtcpm");
-	rtcpm(); 
+	rtcpm();
 	//rt29parts(); //without multiple thread
 
 
@@ -1163,7 +1162,7 @@ int main() {
   //       exit(1);
   //   }
   //   sockfd = socket(AF_INET, SOCK_STREAM, 0);
-  //   if (sockfd < 0) 
+  //   if (sockfd < 0)
   //       error("ERROR opening socket");
   //   bzero((char *) &serv_addr, sizeof(serv_addr));
   //   portno = atoi(argv[1]);
@@ -1171,14 +1170,14 @@ int main() {
   //   serv_addr.sin_addr.s_addr = INADDR_ANY;
   //   serv_addr.sin_port = htons(portno);
   //   if (bind(sockfd, (struct sockaddr *) &serv_addr,
-  //             sizeof(serv_addr)) < 0) 
+  //             sizeof(serv_addr)) < 0)
   //             error("ERROR on binding");
   //   listen(sockfd,5);
   //   clilen = sizeof(cli_addr);
   //   LOG(ERROR) << "Init ready, waiting for request....";
   //   while (1) {
   //       newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
-  //       if (newsockfd < 0) 
+  //       if (newsockfd < 0)
   //           error("ERROR on accept");
   //       //pid = fork();
   //       //if (pid < 0)

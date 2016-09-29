@@ -14,7 +14,7 @@ __global__ void nms_register_kernel(Dtype* src_pointer, int* workspace, int w, i
 	// get pixel location (x,y)
 	int x = (blockIdx.x * blockDim.x) + threadIdx.x;
 	int y = (blockIdx.y * blockDim.y) + threadIdx.y;
-	
+
 	if( x==0 || x==(w-1) || y>0 || y==(h-1) ){
 		workspace[y*w + x] = 0;
 	}
@@ -53,13 +53,13 @@ __global__ void writeResultKernel(int length, int* input, Dtype* src_pointer, Dt
 
     if(globalIdx < length){
         local[threadIdx.x] = input[globalIdx];
-        if(threadIdx.x == numThreadsPerBlock - 1 && globalIdx != length - 1){ 
+        if(threadIdx.x == numThreadsPerBlock - 1 && globalIdx != length - 1){
             //last thread in the block but not globally last, load one more
             local[threadIdx.x+1] = input[globalIdx+1];
         }
         __syncthreads();
         // see difference, except the globally last one
-        if(globalIdx != length - 1){ 
+        if(globalIdx != length - 1){
             if(local[threadIdx.x] != local[threadIdx.x + 1]) {
                 //means A[globalIdx] == A[globalIdx + 1] as the input[globalIdx]-th repeat
                 int peak_index = input[globalIdx]; //0-index
@@ -67,7 +67,7 @@ __global__ void writeResultKernel(int length, int* input, Dtype* src_pointer, Dt
                 int peak_loc_x = peak_loc % width;
                 int peak_loc_y = peak_loc / width;
 
-                if(peak_index <= 9){ //limitation
+                if(peak_index <= 19){ //limitation
 	                //output[input[globalIdx]] = globalIdx;
 	                output[(peak_index + 1) * 3] = peak_loc_x;
 	                output[(peak_index + 1) * 3 + 1] = peak_loc_y;

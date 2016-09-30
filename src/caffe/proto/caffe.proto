@@ -409,6 +409,7 @@ message LayerParameter {
   optional RenderParameter render_param = 150;
   optional CocoDataParameter cocodata_param = 151;
   optional CPMBottomUpDataParameter cpmbottomup_param = 152;
+  optional SwitchParameter switch_param = 153;
 }
 
 message CPMDataParameter {
@@ -575,6 +576,10 @@ message TransformationParameter {
 }
 
 message RenderParameter {
+  optional uint32 num_output = 1 [default = 3];
+}
+
+message SwitchParameter {
   optional uint32 num_output = 1 [default = 3];
 }
 

@@ -21,6 +21,7 @@
 #include <iostream>
 #include "caffe/blob.hpp"
 #include "caffe/common.hpp"
+#include "caffe/layers/switch_layer.hpp"
 #include "caffe/net.hpp"
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/util/db.hpp"
@@ -37,6 +38,7 @@
 #include <ctime>
 #include <chrono>
 #include <mutex>
+#include <algorithm>
 
 using caffe::Blob;
 using caffe::Caffe;
@@ -64,6 +66,8 @@ DEFINE_string(resolution, "960x540",
 
 DEFINE_int32(start_device, 0,
 						 "GPU device start number.");
+DEFINE_int32(num_gpu, 1,
+						 "The number of GPU devices to use.");
 
 // These are set to match FLAGS_resolution
 int origin_width=960; //960 //1280 //640
@@ -123,9 +127,23 @@ struct GLOBAL {
 	float target_size[1][2];
 	bool quit_threads;
 
+	VideoCapture cap;
 	struct UIState {
-		UIState() : is_fullscreen(0) {}
+		UIState() :
+			is_fullscreen(0),
+			is_video_paused(0),
+			is_shift_down(0),
+			current_frame(0),
+			seek_to_frame(-1),
+			select_stage(-1),
+			fps(0) {}
 		bool is_fullscreen;
+		bool is_video_paused;
+		bool is_shift_down;
+		int current_frame;
+		int seek_to_frame;
+		int select_stage;
+		double fps;
 	};
 	UIState uistate;
  };
@@ -188,7 +206,6 @@ void warmup(int device_id){
 	nc[device_id].person_net->CopyTrainedLayersFrom(person_detector_caffemodel);
 	nc[device_id].nblob_person = nc[device_id].person_net->blob_names().size();
 	nc[device_id].num_people.resize(batch_size);
-
 	vector<int> shape(4);
 	shape[0] = batch_size;
 	shape[1] = 3;
@@ -266,38 +283,68 @@ void render(int gid) {
 
 
 void* getFrameFromCam(void *i){
-
-		VideoCapture cap;
+		VideoCapture &cap = global.cap;
+		double target_frame_time = 0;
+		double target_frame_rate = 0;
 		if (FLAGS_video.empty()) {
 			CHECK(cap.open(FLAGS_camera)) << "Couldn't open camera " << FLAGS_camera;
 			cap.set(CV_CAP_PROP_FRAME_WIDTH,CAMERA_FRAME_WIDTH);
 			cap.set(CV_CAP_PROP_FRAME_HEIGHT,CAMERA_FRAME_HEIGHT);
 		} else {
 			CHECK(cap.open(FLAGS_video)) << "Couldn't open video file " << FLAGS_video;
+			target_frame_rate = cap.get(CV_CAP_PROP_FPS);
+			target_frame_time = 1.0/target_frame_rate;
 		}
 
     int global_counter = 1;
 		int frame_counter = 0;
 		Mat image_uchar;
+		double last_frame_time = -1;
     while(1) {
 			if (global.quit_threads) break;
 
 			cap >> image_uchar;
 
-			// Keep a count of how many frames we've seen
+			// Keep a count of how many frames we've seen in the video
 			if (!FLAGS_video.empty()) {
+				if (global.uistate.seek_to_frame!=-1) {
+					cap.set(CV_CAP_PROP_POS_FRAMES, global.uistate.current_frame);
+					global.uistate.seek_to_frame = -1;
+				}
 				frame_counter = cap.get(CV_CAP_PROP_POS_FRAMES);
-			}
+
+				// This should probably be protected.
+				global.uistate.current_frame = frame_counter-1;
+				if (global.uistate.is_video_paused) {
+					cap.set(CV_CAP_PROP_POS_FRAMES, frame_counter-1);
+					frame_counter -= 1;
+				}
 
 			// If we reach the end of a video, loop
-			if (!FLAGS_video.empty()) {
+
 				if (frame_counter >= cap.get(CV_CAP_PROP_FRAME_COUNT)) {
 					LOG(INFO) << "Looping video after " << frame_counter-1 << " frames";
 			    cap.set(CV_CAP_PROP_POS_FRAMES, 0);
 				}
-			} else {
+
+				// Sleep to get the right frame rate.
+				double cur_frame_time = get_wall_time();
+				double interval = (cur_frame_time-last_frame_time);
+
+				VLOG(2) << "Video target frametime " << 1.0/target_frame_time
+								<< " read frametime " << 1.0/interval;
+				if (interval<target_frame_time) {
+					VLOG(2) << "Sleeping for " << (target_frame_time-interval)*1000.0;
+					usleep((target_frame_time-interval)*1000.0*1000.0);
+					cur_frame_time = get_wall_time();
+				}
+				last_frame_time = cur_frame_time;
+			}	else {
+				// From camera, just increase counter.
 				frame_counter++;
 			}
+
+
 
 			resize(image_uchar, image_uchar, Size(origin_width, origin_height), 0, 0, CV_INTER_AREA);
 
@@ -440,6 +487,21 @@ void* processFrame(void *i){
 		}
 		if(valid_data == 0) continue;
 
+		if (global.uistate.select_stage>=0) {
+			caffe::SwitchLayer<float> *layer_ptr =
+				(caffe::SwitchLayer<float>*)nc[tid].person_net->layer_by_name("Switch_L1").get();
+				if (layer_ptr!=NULL) {
+					LOG(INFO) << "Selecting stage " << global.uistate.select_stage;
+					layer_ptr->SelectSwitch(global.uistate.select_stage);
+					layer_ptr->switch_select_ = global.uistate.select_stage;
+				}
+				(caffe::SwitchLayer<float>*)nc[tid].person_net->layer_by_name("Switch_L2").get();
+				if (layer_ptr!=NULL) {
+					LOG(INFO) << "Selecting stage " << global.uistate.select_stage;
+					layer_ptr->SelectSwitch(global.uistate.select_stage);
+					layer_ptr->switch_select_ = global.uistate.select_stage;
+				}
+		}
 		//timer.Stop();
 		//LOG(ERROR) << "Time: " << timer.MicroSeconds() << "us.";
 
@@ -954,22 +1016,30 @@ void* displayFrame(void *i) { //single thread
 	double last_time = get_wall_time();
   double this_time;
   float FPS = 0;
-
+	char fps_str[256];
 	//Mat resized_frame;
 	while(1) {
 		if (global.quit_threads) break;
 
 		f = global.output_queue_ordered.pop();
 		Mat wrap_frame(origin_height, origin_width, CV_8UC3, f.data_for_wrap);
+
+		snprintf(fps_str, 256, "%.1f", FPS);
+		cv::putText(wrap_frame, fps_str, cv::Point(27,37),
+			cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 4);
+		cv::putText(wrap_frame, fps_str, cv::Point(25,35),
+			cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(255,255,255), 4);
 		//LOG(ERROR) << "processed";
 		//cv::resize(wrap_frame, resized_frame, Size(1920, 1080), 0, 0, CV_INTER_LINEAR);
 		imshow("video", wrap_frame);
 
 		counter++;
+
 		if(counter % 30 == 0){
-      this_time = get_wall_time();
-      //LOG(ERROR) << frame.cols << "  " << frame.rows;
-      FPS = 30.0f / (this_time - last_time);
+			this_time = get_wall_time();
+			FPS = 30.0f / (this_time - last_time);
+			global.uistate.fps = FPS;
+				//LOG(ERROR) << frame.cols << "  " << frame.rows;
       last_time = this_time;
       char msg[1000];
 			sprintf(msg, "# %d, NP %d, Latency %.3f, Preprocess %.3f, QueueA %.3f, GPU %.3f, QueueB %.3f, Postproc %.3f, QueueC %.3f, Buffered %.3f, QueueD %.3f, FPS = %.1f",
@@ -1227,7 +1297,7 @@ int main(int argc, char *argv[]) {
 											<< ") invalid, should be e.g., 960x540 ";
 	}
 
-	NUM_GPU = 1;
+	NUM_GPU = FLAGS_num_gpu;
 
 	/* server warming up */
 	set_nets();
@@ -1300,16 +1370,40 @@ int main(int argc, char *argv[]) {
 }
 
 bool handleKey(int c) {
-	const std::string key2part = "0123456789qwerty";
-
-	if (c==27 || c=='q') {
+	const std::string key2part = "0123456789qwertyuiop[]asdfghjkl;'";
+	const std::string key2stage = "zxcvbn";
+	VLOG(4) << "key: " << (char)c << " code: " << c;
+	if (c>=65505) {
+		global.uistate.is_shift_down = true;
+		c = (char)c;
+		c = tolower(c);
+		VLOG(4) << "post key: " << (char)c << " code: " << c;
+	} else {
+		global.uistate.is_shift_down = false;
+	}
+	VLOG(4) << "shift: " << global.uistate.is_shift_down;
+	if (c==27) {
 		global.quit_threads = true;
 		return false;
 	}
-	int target = -1;
-	int ind = key2part.find(c);
-	if (ind!=string::npos) {
-		target = ind;
+	// Rudimentary seeking in video
+	if (c=='l' || c=='k' || c=='p') {
+		if (!FLAGS_video.empty()) {
+			int cur_frame = global.uistate.current_frame;
+			int frame_delta = 30;
+			if (global.uistate.is_shift_down) frame_delta = 2;
+			if (c=='l') {
+				VLOG(4) << "Jump " << frame_delta << " frames to " << cur_frame;
+				global.uistate.current_frame+=frame_delta;
+				global.uistate.seek_to_frame = 1;
+			} else if (c=='k') {
+				VLOG(4) << "Rewind " << frame_delta << " frames to " << cur_frame;
+				global.uistate.current_frame-=frame_delta;
+				global.uistate.seek_to_frame = 1;
+			} else if (c=='p') {
+				global.uistate.is_video_paused = !global.uistate.is_video_paused;
+			}
+		}
 	}
 	if (c=='f') {
 		if (!global.uistate.is_fullscreen) {
@@ -1324,9 +1418,23 @@ bool handleKey(int c) {
 			global.uistate.is_fullscreen = false;
 		}
 	}
-	if(target >= 0 && target <= 16) {
+	int target = -1;
+	int ind = key2part.find(c);
+	if (ind!=string::npos) {
+		target = ind;
+	}
+	if(target >= 0 && target <= 30) {
 		global.part_to_show = target;
 		LOG(ERROR) << "you set to " << target;
 	}
+
+	int stage = -1;
+	ind = key2stage.find(c);
+	if (ind!=string::npos) {
+		stage = ind;
+		global.uistate.select_stage = stage;
+	}
+
+
 	return true;
 }

@@ -585,17 +585,21 @@ __global__ void render_pose_29parts_heatmap(float* dst_pointer, int w_canvas, in
                                        heatmaps[offset_src + y_nei[i]*w_net + x_nei[3]], dx);
         }
         cubic_interpolation(value_this, temp[0], temp[1], temp[2], temp[3], dy);
-        if(part != 14){
-          if(value_this > value)
+        // if(part != 14){
+        //   if(value_this > value)
+        //     value = value_this;
+        // } else {
+        //   if(value_this < value)
             value = value_this;
-        } else {
-          if(value_this < value)
-            value = value_this;
-        }
+        // }
       }
     }
     float c[3];
-    getColor(c, value, 0, 1);
+    if (part<16){
+      getColor(c, value, 0, 1);
+    } else {
+      getColor(c, value, -1, 1);
+    }
     b = 0.5 * b + 0.5 * c[0];
     g = 0.5 * g + 0.5 * c[1];
     r = 0.5 * r + 0.5 * c[2];
@@ -818,8 +822,12 @@ void render_in_cuda_website_indi(float* canvas, int w_canvas, int h_canvas, int 
                                                           part-1);
       }
     } else {
-      if (part > 0)
-        render_pose_website_heatmap_empty<<<threadsPerBlock, numBlocks>>>(canvas, w_canvas, h_canvas);
+      if (part > 0) {
+        render_pose_29parts_heatmap<<<threadsPerBlock, numBlocks>>>(canvas, w_canvas, h_canvas, w_net, h_net,
+                                                          heatmaps+offset_heatmap_so_far, num_people_this_frame,
+                                                          part-1);
+        // render_pose_website_heatmap_empty<<<threadsPerBlock, numBlocks>>>(canvas, w_canvas, h_canvas);
+      }
     }
 
     //LOG(ERROR) << "num_people[i] = " << num_people[i];

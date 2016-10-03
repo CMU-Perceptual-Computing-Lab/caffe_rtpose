@@ -11,7 +11,7 @@ template <typename Dtype>
 class NmsLayer : public Layer<Dtype> {
  public:
   explicit NmsLayer(const LayerParameter& param)
-      : Layer<Dtype>(param) {}
+      : Layer<Dtype>(param), num_parts_(15), max_peaks_(20) {}
   virtual void LayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top);
   virtual void Reshape(const vector<Blob<Dtype>*>& bottom,
@@ -20,6 +20,9 @@ class NmsLayer : public Layer<Dtype> {
   virtual inline const char* type() const { return "Nms"; }
   virtual inline int ExactNumBottomBlobs() const { return 1; }
   virtual inline int ExactNumTopBlobs() const { return 1; }
+
+  virtual inline int GetMaxPeaks() const { return max_peaks_; }
+  virtual inline int GetNumParts() const { return num_parts_; }
 
  protected:
   virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
@@ -34,6 +37,8 @@ class NmsLayer : public Layer<Dtype> {
   Blob<int> workspace; //only used by gpu
   //thrust::device_vector<Dtype> workspace;
   Dtype threshold;
+  int num_parts_;
+  int max_peaks_;
 };
 
 }

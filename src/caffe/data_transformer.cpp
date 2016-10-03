@@ -988,7 +988,7 @@ void DataTransformer<Dtype>::generateLabelMap(Dtype* transformed_label, Mat& img
     if(param_.has_masks()){
       float one_over_stride = 1.0/stride;
       resize(teeth_mask, teeth_mask, Size(), one_over_stride, one_over_stride, INTER_CUBIC);
-      assert(teeth_mask.cols == g_x && teeth_mask.rows == g_y);
+      //assert(teeth_mask.cols == g_x && teeth_mask.rows == g_y);
 
       for (int g_y = 0; g_y < grid_y; g_y++){
         for (int g_x = 0; g_x < grid_x; g_x++){

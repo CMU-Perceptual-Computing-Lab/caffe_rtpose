@@ -586,6 +586,8 @@ message SwitchParameter {
 message NmsParameter {
   optional float threshold = 1 [default = 0.5];
   optional uint32 num_peak = 2 [default = 100];
+  optional uint32 max_peaks = 3 [default = 20];
+  optional uint32 num_parts = 4 [default = 15];
 }
 
 message ImResizeParameter {

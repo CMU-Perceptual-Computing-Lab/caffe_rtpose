@@ -22,12 +22,14 @@
 #include "caffe/blob.hpp"
 #include "caffe/common.hpp"
 #include "caffe/layers/switch_layer.hpp"
+#include "caffe/layers/nms_layer.hpp"
 #include "caffe/net.hpp"
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/util/db.hpp"
 #include "caffe/util/io.hpp"
 #include "caffe/util/benchmark.hpp"
 #include "caffe/util/blocking_queue.hpp"
+#include "caffe/util/render_functions.hpp"
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/contrib/contrib.hpp>
@@ -39,6 +41,8 @@
 #include <chrono>
 #include <mutex>
 #include <algorithm>
+
+#include "modeldesc.h"
 
 using caffe::Blob;
 using caffe::Caffe;
@@ -63,6 +67,8 @@ DEFINE_string(caffeproto, "model/pose_deploy_linevec.prototxt",
 
 DEFINE_string(resolution, "960x540",
 						 "The image resolution to run the detector on.");
+DEFINE_string(camera_resolution, "1280x720",
+						 "Size of the camera frames to ask for.");
 
 DEFINE_int32(start_device, 0,
 						 "GPU device start number.");
@@ -73,11 +79,10 @@ DEFINE_int32(num_gpu, 1,
 int origin_width=960; //960 //1280 //640
 int origin_height=540; //540 //720 //480
 
-// These control the size of the frame requested from VideoCapture
-#define CAMERA_FRAME_WIDTH 1920
-#define CAMERA_FRAME_HEIGHT 1080
+// These are set to match FLAGS_camera_resolution
+int camera_frame_width=1920;
+int camera_frame_height=1080;
 
-#define INIT_TOTAL_NUM_PEOPLE 4
 #define boxsize 368
 #define fixed_scale_height 368
 #define peak_blob_offset 33
@@ -88,7 +93,10 @@ int origin_height=540; //540 //720 //480
 #define MAX_LENGTH_INPUT_QUEUE 500 //affects memory usage
 #define FPS_SRC 30
 #define batch_size 1
-#define MAX_PEOPLE 20
+
+#define MAX_NUM_PARTS 70
+#define MAX_PEOPLE 32
+#define MAX_MAX_PEAKS 64
 
 float start_scale = 0.9;
 int NUM_GPU;  //4
@@ -109,6 +117,9 @@ struct NET_COPY {
 	int nblob_person;
 	int nblob_pose;
 	int total_num_people;
+	int nms_max_peaks;
+	int nms_num_parts;
+	ModelDescriptor *modeldesc;
 	float* canvas; // GPU memory
 	float* joints; // GPU memory
 };
@@ -127,7 +138,6 @@ struct GLOBAL {
 	float target_size[1][2];
 	bool quit_threads;
 
-	VideoCapture cap;
 	struct UIState {
 		UIState() :
 			is_fullscreen(0),
@@ -150,8 +160,8 @@ struct GLOBAL {
 
 struct ColumnCompare
 {
-    bool operator()(const std::vector<float>& lhs,
-                    const std::vector<float>& rhs) const
+    bool operator()(const std::vector<double>& lhs,
+                    const std::vector<double>& rhs) const
     {
         return lhs[2] > rhs[2];
         //return lhs[0] > rhs[0];
@@ -160,6 +170,9 @@ struct ColumnCompare
 
 NET_COPY nc[4];
 GLOBAL global;
+
+// TODO: Clean this up
+ModelDescriptor *model_descriptor = 0;
 
 void set_nets();
 int rtcpm();
@@ -182,7 +195,7 @@ double get_wall_time(){
 }
 
 void printGlobal(string src){
-	LOG(ERROR) << src << "\t input_queue: " << global.input_queue.size()
+	VLOG(3) << src << "\t input_queue: " << global.input_queue.size()
 	           << " | output_queue: " << global.output_queue.size()
 	           << " | output_queue_ordered: " << global.output_queue_ordered.size()
 	           << " | output_queue_mated: " << global.output_queue_mated.size();
@@ -197,13 +210,18 @@ void set_nets(){
 
 void warmup(int device_id){
 
-	LOG(ERROR) << "Setting GPU " << device_id;
+	int logtostderr = FLAGS_logtostderr;
+
+	LOG(INFO) << "Setting GPU " << device_id;
+
 	Caffe::SetDevice(device_id); //cudaSetDevice(device_id) inside
 	Caffe::set_mode(Caffe::GPU); //
 
-	LOG(ERROR) << "GPU " << device_id << ": copying to person net";
+	LOG(INFO) << "GPU " << device_id << ": copying to person net";
+	FLAGS_logtostderr = 0;
 	nc[device_id].person_net = new Net<float>(person_detector_proto, caffe::TEST);
 	nc[device_id].person_net->CopyTrainedLayersFrom(person_detector_caffemodel);
+
 	nc[device_id].nblob_person = nc[device_id].person_net->blob_names().size();
 	nc[device_id].num_people.resize(batch_size);
 	vector<int> shape(4);
@@ -211,16 +229,39 @@ void warmup(int device_id){
 	shape[1] = 3;
 	shape[2] = INIT_PERSON_NET_HEIGHT;
 	shape[3] = INIT_PERSON_NET_WIDTH;
+
 	nc[device_id].person_net->blobs()[0]->Reshape(shape);
 	nc[device_id].person_net->Reshape();
+	FLAGS_logtostderr = logtostderr;
+
+	caffe::NmsLayer<float> *nms_layer =
+		(caffe::NmsLayer<float>*)nc[device_id].person_net->layer_by_name("nms").get();
+	nc[device_id].nms_max_peaks = nms_layer->GetMaxPeaks();
+
+	// CHECK_EQ(nc[device_id].nms_max_peaks, 20)
+	// 	<< "num_peaks not 20";
+
+	nc[device_id].nms_num_parts = nms_layer->GetNumParts();
+	CHECK_LE(nc[device_id].nms_num_parts, MAX_NUM_PARTS)
+		<< "num_parts in NMS layer (" << nc[device_id].nms_num_parts << ") "
+		<< "too big ( MAX_NUM_PARTS )";
+
+	if (nc[device_id].nms_num_parts==15) {
+		nc[device_id].modeldesc = new MPIModelDescriptor();
+	} else if (nc[device_id].nms_num_parts==18) {
+		nc[device_id].modeldesc = new COCOModelDescriptor();
+	} else {
+		CHECK(0) << "Unknown number of parts! Couldn't set model";
+	}
+	model_descriptor = nc[device_id].modeldesc;
 
 	//dry run
 	LOG(INFO) << "Dry running...";
 	nc[device_id].person_net->ForwardFrom(0);
 	//nc[device_id].pose_net->ForwardFrom(0);
-
+	LOG(INFO) << "Success.";
 	cudaMalloc(&nc[device_id].canvas, origin_width * origin_height * 3 * sizeof(float));
-	cudaMalloc(&nc[device_id].joints, 45*MAX_PEOPLE * sizeof(float) );
+	cudaMalloc(&nc[device_id].joints, MAX_NUM_PARTS*3*MAX_PEOPLE * sizeof(float) );
 }
 
 void process_and_pad_image(float* target, Mat oriImg, int tw, int th, bool normalize){
@@ -264,36 +305,42 @@ void process_and_pad_image(float* target, Mat oriImg, int tw, int th, bool norma
 	// cv::imwrite("validate.jpg", test);
 }
 
-void render(int gid) {
+void render(int gid, float *heatmaps /*GPU*/) {
 	// LOG(ERROR) << "begin render";
 
 	//float* canvas = nc[gid].person_net->blobs()[3]->mutable_gpu_data(); //render layer
 	//float* image_ref = nc[gid].person_net->blobs()[0]->mutable_gpu_data();
 	//float* centers  = nc[gid].person_net->blobs()[nc[gid].nblob_person-1]->mutable_gpu_data();
 	float* centers = 0;
-	float* heatmaps = nc[gid].person_net->blobs()[nc[gid].nblob_person-2]->mutable_gpu_data();
-	//float* poses    = nc[gid].pose_net->blobs()[nc[gid].nblob_pose-1]->mutable_gpu_data();
+		//float* poses    = nc[gid].pose_net->blobs()[nc[gid].nblob_pose-1]->mutable_gpu_data();
 	float* poses    = nc[gid].joints;
 
 	//LOG(ERROR) << "begin render_in_cuda";
 	//LOG(ERROR) << "CPU part num" << global.part_to_show;
-	caffe::render_in_cuda_website_indi(nc[gid].canvas, origin_width, origin_height, INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT,
+	if (nc[gid].modeldesc->num_parts()==15) {
+		caffe::render_mpi_parts(nc[gid].canvas, origin_width, origin_height, INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT,
 									   heatmaps, boxsize, centers, poses, nc[gid].num_people, global.part_to_show);
+  } else if (nc[gid].modeldesc->num_parts()==18) {
+		caffe::render_coco_parts(nc[gid].canvas, origin_width, origin_height, INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT,
+									   heatmaps, boxsize, centers, poses, nc[gid].num_people, global.part_to_show);
+  }
 }
 
 
 void* getFrameFromCam(void *i){
-		VideoCapture &cap = global.cap;
+		VideoCapture cap;
 		double target_frame_time = 0;
 		double target_frame_rate = 0;
 		if (FLAGS_video.empty()) {
 			CHECK(cap.open(FLAGS_camera)) << "Couldn't open camera " << FLAGS_camera;
-			cap.set(CV_CAP_PROP_FRAME_WIDTH,CAMERA_FRAME_WIDTH);
-			cap.set(CV_CAP_PROP_FRAME_HEIGHT,CAMERA_FRAME_HEIGHT);
+			cap.set(CV_CAP_PROP_FRAME_WIDTH,camera_frame_width);
+			cap.set(CV_CAP_PROP_FRAME_HEIGHT,camera_frame_height);
 		} else {
 			CHECK(cap.open(FLAGS_video)) << "Couldn't open video file " << FLAGS_video;
 			target_frame_rate = cap.get(CV_CAP_PROP_FPS);
 			target_frame_time = 1.0/target_frame_rate;
+			cap.set(CV_CAP_PROP_POS_FRAMES, 1900);
+			global.uistate.is_video_paused = true;
 		}
 
     int global_counter = 1;
@@ -331,10 +378,10 @@ void* getFrameFromCam(void *i){
 				double cur_frame_time = get_wall_time();
 				double interval = (cur_frame_time-last_frame_time);
 
-				VLOG(2) << "Video target frametime " << 1.0/target_frame_time
+				VLOG(3) << "Video target frametime " << 1.0/target_frame_time
 								<< " read frametime " << 1.0/interval;
 				if (interval<target_frame_time) {
-					VLOG(2) << "Sleeping for " << (target_frame_time-interval)*1000.0;
+					VLOG(3) << "Sleeping for " << (target_frame_time-interval)*1000.0;
 					usleep((target_frame_time-interval)*1000.0*1000.0);
 					cur_frame_time = get_wall_time();
 				}
@@ -435,16 +482,658 @@ void* getFrameFromCam(void *i){
     return nullptr;
 }
 
+int connectLimbs(
+	vector< vector<double>> &subset,
+	vector< vector< vector<double> > > &connection,
+	const float *heatmap_pointer,
+	const float *peaks,
+	int max_peaks,
+	float *joints,
+	ModelDescriptor *modeldesc) {
+		/* Parts Connection ---------------------------------------*/
+		//limbSeq = [15 2; 2 1; 2 3; 3 4; 4 5; 2 6; 6 7; 7 8; 15 12; 12 13; 13 14; 15 9; 9 10; 10 11];
+		//int limbSeq[28] = {14,1, 1,0, 1,2, 2,3, 3,4, 1,5, 5,6, 6,7, 14,11, 11,12, 12,13, 14,8, 8,9, 9,10};
+		//int mapIdx[14] = {27, 16, 17, 18, 19, 20, 21, 22, 15, 25, 26, 14, 23, 24};
+
+		const int NUM_PARTS = modeldesc->num_parts();
+		const int *limbSeq = modeldesc->get_limb_seq();
+		const int *mapIdx = modeldesc->get_map_idx();
+		const int num_limb_seq = modeldesc->num_limb_seq();
+
+		int SUBSET_CNT = NUM_PARTS+2;
+		int SUBSET_SCORE = NUM_PARTS+1;
+		int SUBSET_SIZE = NUM_PARTS+3;
+
+		CHECK_EQ(NUM_PARTS, 15);
+		CHECK_EQ(num_limb_seq, 14);
+
+		int peaks_offset = 3*(max_peaks+1);
+		subset.clear();
+		connection.clear();
+
+		for(int k = 0; k < num_limb_seq; k++){
+			//float* score_mid = heatmap_pointer + mapIdx[k] * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
+			const float* map_x = heatmap_pointer + mapIdx[2*k] * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
+			const float* map_y = heatmap_pointer + mapIdx[2*k+1] * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
+
+			const float* candA = peaks + limbSeq[2*k]*peaks_offset;
+			const float* candB = peaks + limbSeq[2*k+1]*peaks_offset;
+			//debug
+			// for(int i = 0; i < 33; i++){
+			//    	cout << candA[i] << " ";
+			// }
+			// cout << endl;
+			// for(int i = 0; i < 33; i++){
+			//    	cout << candB[i] << " ";
+			// }
+			// cout << endl;
+
+			vector< vector<double> > connection_k;
+			int nA = candA[0];
+			int nB = candB[0];
+
+			// add parts into the subset in special case
+			if(nA ==0 && nB ==0){
+				continue;
+			}
+			else if(nA ==0){
+				for(int i = 1; i <= nB; i++){
+					vector<double> row_vec(SUBSET_SIZE, 0);
+					row_vec[ limbSeq[2*k+1] ] = limbSeq[2*k+1]*peaks_offset + i*3 + 2; //store the index
+					row_vec[SUBSET_CNT] = 1; //last number in each row is the parts number of that person
+					row_vec[SUBSET_SCORE] = candB[i*3+2]; //second last number in each row is the total score
+					subset.push_back(row_vec);
+				}
+				continue;
+			}
+			else if(nB ==0){
+				for(int i = 1; i <= nA; i++){
+					vector<double> row_vec(SUBSET_SIZE, 0);
+					row_vec[ limbSeq[2*k] ] = limbSeq[2*k]*peaks_offset + i*3 + 2; //store the index
+					row_vec[SUBSET_CNT] = 1; //last number in each row is the parts number of that person
+					row_vec[SUBSET_SCORE] = candA[i*3+2]; //second last number in each row is the total score
+					subset.push_back(row_vec);
+				}
+				continue;
+			}
+
+			vector< vector<double>> temp;
+			const int num_inter = 20;
+
+			for(int i = 1; i <= nA; i++){
+				for(int j = 1; j <= nB; j++){
+					/*//midPoint = round((candA(i,1:2) + candB(j,1:2))/2);
+					int mid_x = round((candA[i*3] + candB[j*3])/2);
+					int mid_y = round((candA[i*3+1] + candB[j*3+1])/2);
+					float dist = sqrt(pow((candA[i*3]-candB[j*3]),2)+pow((candA[i*3+1]-candB[j*3+1]),2));
+					//float score = score_mid[ mid_y * INIT_PERSON_NET_WIDTH + mid_x] + std::min((150/dist-1),0.f);
+
+					float sum = 0;
+					int count = 0;
+					for(int dh=-5; dh < 5; dh++){
+					for(int dw=-5; dw < 5; dw++){
+					int my = mid_y + dh;
+					int mx = mid_x + dw;
+					if(mx>=0 && mx < INIT_PERSON_NET_WIDTH && my>=0 && my < INIT_PERSON_NET_HEIGHT ){
+					sum = sum + score_mid[ my * INIT_PERSON_NET_WIDTH + mx];
+					count ++;
+				}
+			}
+		}
+		*/
+		float s_x = candA[i*3];
+		float s_y = candA[i*3+1];
+		float d_x = candB[j*3] - candA[i*3];
+		float d_y = candB[j*3+1] - candA[i*3+1];
+		float norm_vec = sqrt( pow(d_x,2) + pow(d_y,2) );
+		float vec_x = d_x/norm_vec;
+		float vec_y = d_y/norm_vec;
+
+		float sum = 0;
+		int count = 0;
+
+		for(int lm=0; lm < num_inter; lm++){
+			int my = round(s_y + lm*d_y/num_inter);
+			int mx = round(s_x + lm*d_x/num_inter);
+			int idx = my * INIT_PERSON_NET_WIDTH + mx;
+			float score = (vec_x*map_x[idx] + vec_y*map_y[idx]);
+			if(score > 0.01){
+				sum = sum + sqrt(score);
+				count ++;
+			}
+		}
+		//float score = sum / count; // + std::min((130/dist-1),0.f)
+
+		if(count > num_inter*0.8){//num_inter*0.8){ //thre/2
+			// parts score + cpnnection score
+			vector<double> row_vec(4, 0);
+			row_vec[3] = sum/count + candA[i*3+2] + candB[j*3+2]; //score_all
+			row_vec[2] = sum/count;
+			row_vec[0] = i;
+			row_vec[1] = j;
+			temp.push_back(row_vec);
+		}
+	}
+}
+
+//** select the top num connection, assuming that each part occur only once
+// sort rows in descending order based on parts + connection score
+if(temp.size() > 0)
+sort(temp.begin(), temp.end(), ColumnCompare());
+
+int num = min(nA, nB);
+int cnt = 0;
+vector<int> occurA(nA, 0);
+vector<int> occurB(nB, 0);
+
+//debug
+// 	if(k==3){
+//  cout << "connection before" << endl;
+// 	for(int i = 0; i < temp.size(); i++){
+// 	   	for(int j = 0; j < temp[0].size(); j++){
+// 	        cout << temp[i][j] << " ";
+// 	    }
+// 	    cout << endl;
+// 	}
+// 	//cout << "debug" << score_mid[ 216 * INIT_PERSON_NET_WIDTH + 184] << endl;
+// }
+
+//cout << num << endl;
+for(int row =0; row < temp.size(); row++){
+	if(cnt==num){
+		break;
+	}
+	else{
+		int i = int(temp[row][0]);
+		int j = int(temp[row][1]);
+		float score = temp[row][2];
+		if ( occurA[i-1] == 0 && occurB[j-1] == 0 ){ // && score> (1+thre)
+			vector<double> row_vec(3, 0);
+			row_vec[0] = limbSeq[2*k]*peaks_offset + i*3 + 2;
+			row_vec[1] = limbSeq[2*k+1]*peaks_offset + j*3 + 2;
+			row_vec[2] = score;
+			connection_k.push_back(row_vec);
+			cnt = cnt+1;
+			//cout << "cnt: " << connection_k.size() << endl;
+			occurA[i-1] = 1;
+			occurB[j-1] = 1;
+		}
+	}
+}
+//   if(k==0){
+//     cout << "connection" << endl;
+//     for(int i = 0; i < connection_k.size(); i++){
+// 	   	for(int j = 0; j < connection_k[0].size(); j++){
+// 	        cout << connection_k[i][j] << " ";
+// 	    }
+// 	    cout << endl;
+// 	}
+// }
+//connection.push_back(connection_k);
+
+
+//** cluster all the joints candidates into subset based on the part connection
+// initialize first body part connection 15&16
+//cout << connection_k.size() << endl;
+if(k==0){
+	vector<double> row_vec(NUM_PARTS+3, 0);
+	for(int i = 0; i < connection_k.size(); i++){
+		double indexA = connection_k[i][0];
+		double indexB = connection_k[i][1];
+		row_vec[limbSeq[0]] = indexA;
+		row_vec[limbSeq[1]] = indexB;
+		row_vec[SUBSET_CNT] = 2;
+		// add the score of parts and the connection
+		row_vec[SUBSET_SCORE] = peaks[int(indexA)] + peaks[int(indexB)] + connection_k[i][2];
+		subset.push_back(row_vec);
+	}
+}
+else{
+	if(connection_k.size()==0){
+		continue;
+	}
+	// A is already in the subset, find its connection B
+	for(int i = 0; i < connection_k.size(); i++){
+		int num = 0;
+		double indexA = connection_k[i][0];
+		double indexB = connection_k[i][1];
+
+		for(int j = 0; j < subset.size(); j++){
+			if(subset[j][limbSeq[2*k]] == indexA){
+				subset[j][limbSeq[2*k+1]] = indexB;
+				num = num+1;
+				subset[j][SUBSET_CNT] = subset[j][SUBSET_CNT] + 1;
+				subset[j][SUBSET_SCORE] = subset[j][SUBSET_SCORE] + peaks[int(indexB)] + connection_k[i][2];
+			}
+		}
+		// if can not find partA in the subset, create a new subset
+		if(num==0){
+			vector<double> row_vec(SUBSET_SIZE, 0);
+			row_vec[limbSeq[2*k]] = indexA;
+			row_vec[limbSeq[2*k+1]] = indexB;
+			row_vec[SUBSET_CNT] = 2;
+			row_vec[SUBSET_SCORE] = peaks[int(indexA)] + peaks[int(indexB)] + connection_k[i][2];
+			subset.push_back(row_vec);
+		}
+	}
+}
+//cout << nA << " ";
+}
+
+//debug
+// cout << " subset " << endl;
+// for(int i = 0; i < subset.size(); i++){
+//    	for(int j = 0; j < subset[0].size(); j++){
+//         cout << subset[i][j] << " ";
+//     }
+//     cout << endl;
+// }
+
+//** joints by deleteing some rows of subset which has few parts occur
+//cout << " joints " << endl;
+int cnt = 0;
+for(int i = 0; i < subset.size(); i++){
+	//cout << "score: " << i << " " << subset[i][16]/subset[i][17];
+	if (subset[i][SUBSET_CNT]>=3 && (subset[i][SUBSET_SCORE]/subset[i][SUBSET_CNT])>0.4){
+		for(int j = 0; j < NUM_PARTS; j++){
+			int idx = int(subset[i][j]);
+			if(idx){
+				joints[cnt*NUM_PARTS*3 + j*3 +2] = peaks[idx];
+				joints[cnt*NUM_PARTS*3 + j*3 +1] = peaks[idx-1]* origin_height/ INIT_PERSON_NET_HEIGHT;//(peaks[idx-1] - padh) * ratio_h;
+				joints[cnt*NUM_PARTS*3 + j*3] = peaks[idx-2]* origin_width/ INIT_PERSON_NET_WIDTH;//(peaks[idx-2] -padw) * ratio_w;
+				//cout << peaks[idx-2] << " " << peaks[idx-1] << " " << peaks[idx] << endl;
+			}
+			else{
+				joints[cnt*NUM_PARTS*3 + j*3 +2] = 0;
+				joints[cnt*NUM_PARTS*3 + j*3 +1] = 0;
+				joints[cnt*NUM_PARTS*3 + j*3] = 0;
+				//cout << 0 << " " << 0 << " " << 0 << endl;
+			}
+			//cout << joints[cnt*45 + j*3] << " " << joints[cnt*45 + j*3 +1] << " " << joints[cnt*45 + j*3 +2] << endl;
+		}
+		cnt++;
+		if (cnt==MAX_PEOPLE) break;
+	}
+	//cout << endl;
+}
+return cnt;
+}
+int distanceThresholdPeaks(const float *in_peaks, int max_peaks,
+	float *peaks, ModelDescriptor *modeldesc) {
+	// Post-process peaks to remove those which are within sqrt(dist_threshold2)
+	// of each other.
+
+	const int NUM_PARTS = modeldesc->num_parts();
+	const float dist_threshold2 = 6*6;
+	int peaks_offset = 3*(max_peaks+1);
+
+	int total_peaks = 0;
+	for(int p = 0; p < NUM_PARTS; p++){
+		const float *pipeaks = in_peaks + p*peaks_offset;
+		float *popeaks = peaks + p*peaks_offset;
+		int num_in_peaks = int(pipeaks[0]);
+		int num_out_peaks = 0; // Actual number of peak count
+		for (int c1=0;c1<num_in_peaks;c1++) {
+			float x1 = pipeaks[(c1+1)*3+0];
+			float y1 = pipeaks[(c1+1)*3+1];
+			float s1 = pipeaks[(c1+1)*3+2];
+			bool keep = true;
+			for (int c2=0;c2<num_out_peaks;c2++) {
+				float x2 = popeaks[(c2+1)*3+0];
+				float y2 = popeaks[(c2+1)*3+1];
+				float s2 = popeaks[(c2+1)*3+2];
+				float dist2 = (x1-x2)*(x1-x2) + (y1-y2)*(y1-y2);
+				if (dist2<dist_threshold2) {
+					// This peak is too close to a peak already in the output buffer
+					// so don't add it.
+					keep = false;
+					if (s1>s2) {
+						// It's better than the one in the output buffer
+						// so we swap it.
+						popeaks[(c2+1)*3+0] = x1;
+						popeaks[(c2+1)*3+1] = y1;
+						popeaks[(c2+1)*3+2] = s1;
+					}
+				}
+			}
+			if (keep && num_out_peaks<max_peaks) {
+				// We don't already have a better peak within the threshold distance
+				popeaks[(num_out_peaks+1)*3+0] = x1;
+				popeaks[(num_out_peaks+1)*3+1] = y1;
+				popeaks[(num_out_peaks+1)*3+2] = s1;
+				num_out_peaks++;
+			}
+		}
+		// if (num_in_peaks!=num_out_peaks) {
+			LOG(INFO) << "Part: " << p << " in peaks: "<< num_in_peaks << " out: " << num_out_peaks;
+		// }
+		popeaks[0] = float(num_out_peaks);
+		total_peaks += num_out_peaks;
+	}
+	return total_peaks;
+}
+
+int connectLimbsCOCO(
+	vector< vector<double>> &subset,
+	vector< vector< vector<double> > > &connection,
+	const float *heatmap_pointer,
+	const float *in_peaks,
+	int max_peaks,
+	float *joints,
+	ModelDescriptor *modeldesc) {
+		/* Parts Connection ---------------------------------------*/
+		const int NUM_PARTS = modeldesc->num_parts();
+		const int *limbSeq = modeldesc->get_limb_seq();
+		const int *mapIdx = modeldesc->get_map_idx();
+		const int num_limb_seq = modeldesc->num_limb_seq();
+
+		CHECK_EQ(NUM_PARTS, 18) << "Wrong connection function for model";
+		CHECK_EQ(num_limb_seq, 19) << "Wrong connection function for model";
+
+		int SUBSET_CNT = NUM_PARTS+2;
+		int SUBSET_SCORE = NUM_PARTS+1;
+		int SUBSET_SIZE = NUM_PARTS+3;
+
+		const int peaks_offset = 3*(max_peaks+1);
+
+		const float *peaks = in_peaks;
+		//float peaks2[(MAX_MAX_PEAKS+1)*MAX_NUM_PARTS*3];
+		//distanceThresholdPeaks(in_peaks, max_peaks, peaks2, modeldesc);
+		subset.clear();
+		connection.clear();
+
+		for(int k = 0; k < num_limb_seq; k++){
+			//float* score_mid = heatmap_pointer + mapIdx[k] * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
+			const float* map_x = heatmap_pointer + mapIdx[2*k] * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
+			const float* map_y = heatmap_pointer + mapIdx[2*k+1] * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
+
+			const float* candA = peaks + limbSeq[2*k]*peaks_offset;
+			const float* candB = peaks + limbSeq[2*k+1]*peaks_offset;
+			//debug
+			// for(int i = 0; i < 33; i++){
+			//    	cout << candA[i] << " ";
+			// }
+			// cout << endl;
+			// for(int i = 0; i < 33; i++){
+			//    	cout << candB[i] << " ";
+			// }
+			// cout << endl;
+
+			vector< vector<double> > connection_k;
+			int nA = candA[0];
+			int nB = candB[0];
+
+			// add parts into the subset in special case
+			if(nA ==0 && nB ==0){
+				continue;
+			} else if(nA ==0){
+				for(int i = 1; i <= nB; i++){
+					int num = 0;
+					int indexB = limbSeq[2*k+1];
+					for(int j = 0; j < subset.size(); j++){
+							int off = limbSeq[2*k+1]*peaks_offset + i*3 + 2;
+							if (subset[j][indexB] == off) {
+									num = num+1;
+									continue;
+							}
+					}
+					// if (num!=0) {
+					// 	LOG(INFO) << " else if(nA==0) shouldn't have any nB already assigned?";
+					// }
+					vector<double> row_vec(SUBSET_SIZE, 0);
+					row_vec[ limbSeq[2*k+1] ] = limbSeq[2*k+1]*peaks_offset + i*3 + 2; //store the index
+					row_vec[SUBSET_CNT] = 1; //last number in each row is the parts number of that person
+					row_vec[SUBSET_SCORE] = candB[i*3+2]; //second last number in each row is the total score
+					subset.push_back(row_vec);
+					//LOG(INFO) << "nA==0 New subset on part " << k << " subsets: " << subset.size();
+				}
+				continue;
+			} else if(nB ==0){
+				for(int i = 1; i <= nA; i++){
+					int num = 0;
+					int indexA = limbSeq[2*k];
+					for(int j = 0; j < subset.size(); j++){
+							int off = limbSeq[2*k]*peaks_offset + i*3 + 2;
+							if (subset[j][indexA] == off) {
+									num = num+1;
+									continue;
+							}
+					}
+					if (num==0) {
+						vector<double> row_vec(SUBSET_SIZE, 0);
+						row_vec[ limbSeq[2*k] ] = limbSeq[2*k]*peaks_offset + i*3 + 2; //store the index
+						row_vec[SUBSET_CNT] = 1; //last number in each row is the parts number of that person
+						row_vec[SUBSET_SCORE] = candA[i*3+2]; //second last number in each row is the total score
+						subset.push_back(row_vec);
+						//LOG(INFO) << "nB==0 New subset on part " << k << " subsets: " << subset.size();
+					} else {
+						//LOG(INFO) << "nB==0 discarded would have added";
+					}
+				}
+				continue;
+			}
+
+			vector< vector<double>> temp;
+			const int num_inter = 20;
+
+			for(int i = 1; i <= nA; i++){
+				for(int j = 1; j <= nB; j++){
+					float s_x = candA[i*3];
+					float s_y = candA[i*3+1];
+					float d_x = candB[j*3] - candA[i*3];
+					float d_y = candB[j*3+1] - candA[i*3+1];
+					float norm_vec = sqrt( pow(d_x,2) + pow(d_y,2) );
+					float vec_x = d_x/norm_vec;
+					float vec_y = d_y/norm_vec;
+
+					float sum = 0;
+					int count = 0;
+
+					for(int lm=0; lm < num_inter; lm++){
+						int my = round(s_y + lm*d_y/num_inter);
+						int mx = round(s_x + lm*d_x/num_inter);
+						int idx = my * INIT_PERSON_NET_WIDTH + mx;
+						float score = (vec_x*map_x[idx] + vec_y*map_y[idx]);
+						if(score > 0.1){
+							sum = sum + sqrt(score);
+							count ++;
+						}
+					}
+					//float score = sum / count; // + std::min((130/dist-1),0.f)
+
+					if(count > 16){//num_inter*0.8){ //thre/2
+						// parts score + cpnnection score
+						vector<double> row_vec(4, 0);
+						row_vec[3] = sum/count + candA[i*3+2] + candB[j*3+2]; //score_all
+						row_vec[2] = sum/count;
+						row_vec[0] = i;
+						row_vec[1] = j;
+						temp.push_back(row_vec);
+					}
+				}
+			}
+
+			//** select the top num connection, assuming that each part occur only once
+			// sort rows in descending order based on parts + connection score
+			if(temp.size() > 0)
+			sort(temp.begin(), temp.end(), ColumnCompare());
+
+			int num = min(nA, nB);
+			int cnt = 0;
+			vector<int> occurA(nA, 0);
+			vector<int> occurB(nB, 0);
+
+			//debug
+			// 	if(k==3){
+			//  cout << "connection before" << endl;
+			// 	for(int i = 0; i < temp.size(); i++){
+			// 	   	for(int j = 0; j < temp[0].size(); j++){
+			// 	        cout << temp[i][j] << " ";
+			// 	    }
+			// 	    cout << endl;
+			// 	}
+			// 	//cout << "debug" << score_mid[ 216 * INIT_PERSON_NET_WIDTH + 184] << endl;
+			// }
+
+			//cout << num << endl;
+			for(int row =0; row < temp.size(); row++){
+				if(cnt==num){
+					break;
+				}
+				else{
+					int i = int(temp[row][0]);
+					int j = int(temp[row][1]);
+					float score = temp[row][2];
+					if ( occurA[i-1] == 0 && occurB[j-1] == 0 ){ // && score> (1+thre)
+						vector<double> row_vec(3, 0);
+						row_vec[0] = limbSeq[2*k]*peaks_offset + i*3 + 2;
+						row_vec[1] = limbSeq[2*k+1]*peaks_offset + j*3 + 2;
+						row_vec[2] = score;
+						connection_k.push_back(row_vec);
+						cnt = cnt+1;
+						//cout << "cnt: " << connection_k.size() << endl;
+						occurA[i-1] = 1;
+						occurB[j-1] = 1;
+					}
+				}
+			}
+			//   if(k==0){
+			//     cout << "connection" << endl;
+			//     for(int i = 0; i < connection_k.size(); i++){
+			// 	   	for(int j = 0; j < connection_k[0].size(); j++){
+			// 	        cout << connection_k[i][j] << " ";
+			// 	    }
+			// 	    cout << endl;
+			// 	}
+			// }
+			//connection.push_back(connection_k);
+
+
+			//** cluster all the joints candidates into subset based on the part connection
+			// initialize first body part connection 15&16
+			//cout << connection_k.size() << endl;
+			if(k==0){
+				vector<double> row_vec(NUM_PARTS+3, 0);
+				for(int i = 0; i < connection_k.size(); i++){
+					double indexB = connection_k[i][1];
+					double indexA = connection_k[i][0];
+					row_vec[limbSeq[0]] = indexA;
+					row_vec[limbSeq[1]] = indexB;
+					row_vec[SUBSET_CNT] = 2;
+					// add the score of parts and the connection
+					row_vec[SUBSET_SCORE] = peaks[int(indexA)] + peaks[int(indexB)] + connection_k[i][2];
+					//LOG(INFO) << "New subset on part " << k << " subsets: " << subset.size();
+					subset.push_back(row_vec);
+				}
+			} /*else if(k==16 || k==17){ // TODO: Check k numbers?
+				//   %add 15 16 connection
+				for(int i = 0; i < connection_k.size(); i++){
+				double indexA = connection_k[i][0];
+				double indexB = connection_k[i][1];
+
+				for(int j = 0; j < subset.size(); j++){
+				// if subset(j, indexA) == partA(i) && subset(j, indexB) == 0
+				// 		subset(j, indexB) = partB(i);
+				// elseif subset(j, indexB) == partB(i) && subset(j, indexA) == 0
+				// 		subset(j, indexA) = partA(i);
+				// end
+				if(subset[j][limbSeq[2*k]] == indexA && subset[j][limbSeq[2*k+1]]==0){
+				subset[j][limbSeq[2*k+1]] = indexB;
+			} else if (subset[j][limbSeq[2*k+1]] == indexB && subset[j][limbSeq[2*k]]==0){
+			subset[j][limbSeq[2*k]] = indexA;
+		}
+	}
+	continue;
+}
+} */ else{
+if(connection_k.size()==0){
+	continue;
+}
+// A is already in the subset, find its connection B
+for(int i = 0; i < connection_k.size(); i++){
+	int num = 0;
+	double indexA = connection_k[i][0];
+	double indexB = connection_k[i][1];
+
+	for(int j = 0; j < subset.size(); j++){
+		if(subset[j][limbSeq[2*k]] == indexA){
+			subset[j][limbSeq[2*k+1]] = indexB;
+			num = num+1;
+			subset[j][SUBSET_CNT] = subset[j][SUBSET_CNT] + 1;
+			subset[j][SUBSET_SCORE] = subset[j][SUBSET_SCORE] + peaks[int(indexB)] + connection_k[i][2];
+		}
+	}
+	// if can not find partA in the subset, create a new subset
+	if(num==0){
+		//LOG(INFO) << "New subset on part " << k << " subsets: " << subset.size();
+		vector<double> row_vec(SUBSET_SIZE, 0);
+		row_vec[limbSeq[2*k]] = indexA;
+		row_vec[limbSeq[2*k+1]] = indexB;
+		row_vec[SUBSET_CNT] = 2;
+		row_vec[SUBSET_SCORE] = peaks[int(indexA)] + peaks[int(indexB)] + connection_k[i][2];
+		subset.push_back(row_vec);
+	}
+}
+}
+//cout << nA << " ";
+}
+
+//debug
+// cout << " subset " << endl;
+// for(int i = 0; i < subset.size(); i++){
+//    	for(int j = 0; j < subset[0].size(); j++){
+//         cout << subset[i][j] << " ";
+//     }
+//     cout << endl;
+// }
+
+//** joints by deleteing some rows of subset which has few parts occur
+//cout << " joints " << endl;
+int cnt = 0;
+for(int i = 0; i < subset.size(); i++){
+	//cout << "score: " << i << " " << subset[i][16]/subset[i][17];
+	if (subset[i][SUBSET_CNT]>=3 && (subset[i][SUBSET_SCORE]/subset[i][SUBSET_CNT])>0.4){
+		for(int j = 0; j < NUM_PARTS; j++){
+			int idx = int(subset[i][j]);
+			if(idx){
+				joints[cnt*NUM_PARTS*3 + j*3 +2] = peaks[idx];
+				joints[cnt*NUM_PARTS*3 + j*3 +1] = peaks[idx-1]* origin_height/ INIT_PERSON_NET_HEIGHT;//(peaks[idx-1] - padh) * ratio_h;
+				joints[cnt*NUM_PARTS*3 + j*3] = peaks[idx-2]* origin_width/ INIT_PERSON_NET_WIDTH;//(peaks[idx-2] -padw) * ratio_w;
+				//cout << peaks[idx-2] << " " << peaks[idx-1] << " " << peaks[idx] << endl;
+			}
+			else{
+				joints[cnt*NUM_PARTS*3 + j*3 +2] = 0;
+				joints[cnt*NUM_PARTS*3 + j*3 +1] = 0;
+				joints[cnt*NUM_PARTS*3 + j*3] = 0;
+				//cout << 0 << " " << 0 << " " << 0 << endl;
+			}
+			//cout << joints[cnt*45 + j*3] << " " << joints[cnt*45 + j*3 +1] << " " << joints[cnt*45 + j*3 +2] << endl;
+		}
+		cnt++;
+		if (cnt==MAX_PEOPLE) break;
+	}
+	//cout << endl;
+}
+return cnt;
+}
+
+
 void* processFrame(void *i){
 	int tid = *((int *) i);
 	warmup(tid);
-	LOG(ERROR) << "GPU " << tid << " is ready";
+	LOG(INFO) << "GPU " << tid << " is ready";
 	Frame f;
 
 	int offset = INIT_PERSON_NET_WIDTH * INIT_PERSON_NET_HEIGHT * 3;
 	//bool empty = false;
 
 	Frame frame_batch[batch_size];
+
+	vector< vector<double>> subset;
+	vector< vector< vector<double> > > connection;
+
+	const boost::shared_ptr< caffe::Blob< float > > heatmap_blob = nc[tid].person_net->blob_by_name("resized_map");
+	const boost::shared_ptr< caffe::Blob< float > > joints_blob = nc[tid].person_net->blob_by_name("joints");
 
 	//while(!empty){
 	while(1){
@@ -461,7 +1150,7 @@ void* processFrame(void *i){
 				//LOG(ERROR) << "frame " << f.index << " is copied to GPU after " << elaspsed_time << " sec";
 				if(elaspsed_time > 0.1*batch_size){ //0.1*batch_size
 					//drop frame
-					LOG(ERROR) << "skip frame " << f.index;
+					VLOG(1) << "skip frame " << f.index;
 					delete [] f.data;
 					delete [] f.data_for_mat;
 					delete [] f.data_for_wrap;
@@ -509,12 +1198,29 @@ void* processFrame(void *i){
 		//LOG(ERROR) << "GPU " << tid << ": Running forward person_net";
 		//nc.person_net->ForwardFromTo(0,nlayer-1);
 		nc[tid].person_net->ForwardFrom(0);
-		//cudaDeviceSynchronize();
+		VLOG(2) << "CNN time " << (get_wall_time()-f.gpu_fetched_time)*1000.0 << " ms.";
+				//cudaDeviceSynchronize();
 		// timer.Stop();
 		// LOG(ERROR) << "Time: " << timer.MicroSeconds() << "us.";
+		float* heatmap_pointer = heatmap_blob->mutable_cpu_data();
+		const float* peaks = joints_blob->mutable_cpu_data();
 
-		float* heatmap_pointer = nc[tid].person_net->blobs()[nc[tid].nblob_person-2]->mutable_cpu_data();
-		float* peaks = nc[tid].person_net->blobs()[nc[tid].nblob_person-1]->mutable_cpu_data();
+		float joints[MAX_NUM_PARTS*3*MAX_PEOPLE]; //10*15*3
+
+		int cnt = 0;
+		// CHECK_EQ(nc[tid].nms_num_parts, 15);
+		double tic = get_wall_time();
+		if (nc[tid].nms_num_parts==15) {
+			cnt = connectLimbs(subset, connection,
+												 heatmap_pointer, peaks,
+												 nc[tid].nms_max_peaks, joints, nc[tid].modeldesc);
+    } else {
+			cnt = connectLimbsCOCO(subset, connection,
+												 heatmap_pointer, peaks,
+												 nc[tid].nms_max_peaks, joints, nc[tid].modeldesc);
+		}
+
+		VLOG(2) << "CNT: " << cnt << " Connect time " << (get_wall_time()-tic)*1000.0 << " ms.";
 
 		/* debug ---------------------------------------*/
 		// //vector<int> bottom_shape = nc[tid].person_net->blobs()[nc[tid].nblob_person-3]->shape();
@@ -574,267 +1280,13 @@ void* processFrame(void *i){
 		// 	cv::imwrite(imgname, heatmap);
 		// }
 
-
-		/* Parts Connection ---------------------------------------*/
-		//limbSeq = [15 2; 2 1; 2 3; 3 4; 4 5; 2 6; 6 7; 7 8; 15 12; 12 13; 13 14; 15 9; 9 10; 10 11];
-		//int limbSeq[28] = {14,1, 1,0, 1,2, 2,3, 3,4, 1,5, 5,6, 6,7, 14,11, 11,12, 12,13, 14,8, 8,9, 9,10};
-		//int mapIdx[14] = {27, 16, 17, 18, 19, 20, 21, 22, 15, 25, 26, 14, 23, 24};
-
-		int limbSeq[28] = {0,1, 1,2, 2,3, 3,4, 1,5, 5,6, 6,7, 1,14, 14,11, 11,12, 12,13, 14,8, 8,9, 9,10};
-		// the middle joints heatmap correpondence
-		int mapIdx[28] = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 38, 39, 40, 41, 42, 43, 32, 33, 34, 35, 36, 37};
-
-		vector< vector<float>> subset;
-		vector< vector< vector<float> > > connection;
-
-		for(int k = 0; k < 14; k++){
-			//float* score_mid = heatmap_pointer + mapIdx[k] * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
-			float* map_x = heatmap_pointer + mapIdx[2*k] * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
-			float* map_y = heatmap_pointer + mapIdx[2*k+1] * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
-
-			float* candA = peaks + limbSeq[2*k]*33;
-			float* candB = peaks + limbSeq[2*k+1]*33;
-			//debug
-		 	// for(int i = 0; i < 33; i++){
-			//    	cout << candA[i] << " ";
-			// }
-			// cout << endl;
-			// for(int i = 0; i < 33; i++){
-			//    	cout << candB[i] << " ";
-			// }
-			// cout << endl;
-
-			vector< vector<float> > connection_k;
-			int nA = candA[0];
-			int nB = candB[0];
-
-			// add parts into the subset in special case
-			if(nA ==0 && nB ==0){
-		        continue;
-			}
-		    else if(nA ==0){
-		        for(int i = 1; i <= nB; i++){
-			        vector<float> row_vec(18, 0);
-			        row_vec[ limbSeq[2*k+1] ] = limbSeq[2*k+1]*33 + i*3 + 2; //store the index
-			        row_vec[17] = 1; //last number in each row is the parts number of that person
-			        row_vec[16] = candB[i*3+2]; //second last number in each row is the total score
-			        subset.push_back(row_vec);
-		    	}
-		        continue;
-		    }
-		    else if(nB ==0){
-		        for(int i = 1; i <= nA; i++){
-			        vector<float> row_vec(18, 0);
-			        row_vec[ limbSeq[2*k] ] = limbSeq[2*k]*33 + i*3 + 2; //store the index
-			        row_vec[17] = 1; //last number in each row is the parts number of that person
-			        row_vec[16] = candA[i*3+2]; //second last number in each row is the total score
-			        subset.push_back(row_vec);
-		    	}
-		        continue;
-		    }
-
-		    vector< vector<float>> temp;
-		    for(int i = 1; i <= nA; i++){
-		        for(int j = 1; j <= nB; j++){
-		            /*//midPoint = round((candA(i,1:2) + candB(j,1:2))/2);
-		            int mid_x = round((candA[i*3] + candB[j*3])/2);
-		        	int mid_y = round((candA[i*3+1] + candB[j*3+1])/2);
-		            float dist = sqrt(pow((candA[i*3]-candB[j*3]),2)+pow((candA[i*3+1]-candB[j*3+1]),2));
-		            //float score = score_mid[ mid_y * INIT_PERSON_NET_WIDTH + mid_x] + std::min((150/dist-1),0.f);
-
-		            float sum = 0;
-		            int count = 0;
-					for(int dh=-5; dh < 5; dh++){
-		            	for(int dw=-5; dw < 5; dw++){
-		            		int my = mid_y + dh;
-		            		int mx = mid_x + dw;
-		            		if(mx>=0 && mx < INIT_PERSON_NET_WIDTH && my>=0 && my < INIT_PERSON_NET_HEIGHT ){
-		            			sum = sum + score_mid[ my * INIT_PERSON_NET_WIDTH + mx];
-		            			count ++;
-		            		}
-		            	}
-		            }
-		            */
-		            float s_x = candA[i*3];
-		            float s_y = candA[i*3+1];
-		            float d_x = candB[j*3] - candA[i*3];
-		            float d_y = candB[j*3+1] - candA[i*3+1];
-								float norm_vec = sqrt( pow(d_x,2) + pow(d_y,2) );
-		            float vec_x = d_x/norm_vec;
-		            float vec_y = d_y/norm_vec;
-
-		            float sum = 0;
-		            int count = 0;
-
-	                for(int lm=0; lm < 10; lm++){
-		            	int my = round(s_y + lm*d_y/10);
-		            	int mx = round(s_x + lm*d_x/10);
-		            	int idx = my * INIT_PERSON_NET_WIDTH + mx;
-		            	float score = vec_x*map_x[idx] + vec_y*map_y[idx];
-		            	if(score > 0.01){
-		            		sum = sum + score;
-		            		count ++;
-		            	}
-		            }
-		            //float score = sum / count; // + std::min((130/dist-1),0.f)
-
-		            if(count > 7){ //thre/2
-		                // parts score + cpnnection score
-		                vector<float> row_vec(4, 0);
-		                row_vec[3] = sum/count + candA[i*3+2] + candB[j*3+2]; //score_all
-		                row_vec[2] = sum/count;
-		                row_vec[0] = i;
-		                row_vec[1] = j;
-		                temp.push_back(row_vec);
-		            }
-		        }
-		    }
-
-		    //** select the top num connection, assuming that each part occur only once
-    		// sort rows in descending order based on parts + connection score
-		    if(temp.size() > 0)
-		    	sort(temp.begin(), temp.end(), ColumnCompare());
-
-		    int num = min(nA, nB);
-		    int cnt = 0;
-		    vector<int> occurA(nA, 0);
-		    vector<int> occurB(nB, 0);
-
-		    //debug
-		 	// 	if(k==3){
-			//  cout << "connection before" << endl;
-	  		// 	for(int i = 0; i < temp.size(); i++){
-			// 	   	for(int j = 0; j < temp[0].size(); j++){
-			// 	        cout << temp[i][j] << " ";
-			// 	    }
-			// 	    cout << endl;
-			// 	}
-			// 	//cout << "debug" << score_mid[ 216 * INIT_PERSON_NET_WIDTH + 184] << endl;
-			// }
-
-			//cout << num << endl;
-		    for(int row =0; row < temp.size(); row++){
-		        if(cnt==num){
-		            break;
-		        }
-		        else{
-		            int i = int(temp[row][0]);
-		            int j = int(temp[row][1]);
-		            float score = temp[row][2];
-		            if ( occurA[i-1] == 0 && occurB[j-1] == 0 ){ // && score> (1+thre)
-		            	vector<float> row_vec(3, 0);
-		                row_vec[0] = limbSeq[2*k]*33 + i*3 + 2;
-		                row_vec[1] = limbSeq[2*k+1]*33 + j*3 + 2;
-		                row_vec[2] = score;
-		                connection_k.push_back(row_vec);
-		                cnt = cnt+1;
-		                //cout << "cnt: " << connection_k.size() << endl;
-		                occurA[i-1] = 1;
-		                occurB[j-1] = 1;
-		            }
-		        }
-		    }
-		 	//   if(k==0){
-			//     cout << "connection" << endl;
-			//     for(int i = 0; i < connection_k.size(); i++){
-			// 	   	for(int j = 0; j < connection_k[0].size(); j++){
-			// 	        cout << connection_k[i][j] << " ";
-			// 	    }
-			// 	    cout << endl;
-			// 	}
-			// }
-		    //connection.push_back(connection_k);
-
-
-		    //** cluster all the joints candidates into subset based on the part connection
-		    // initialize first body part connection 15&16
-		    //cout << connection_k.size() << endl;
-		    if(k==0){
-		    	vector<float> row_vec(18, 0);
-		        for(int i = 0; i < connection_k.size(); i++){
-		        	float indexA = connection_k[i][0];
-		        	float indexB = connection_k[i][1];
-		            row_vec[limbSeq[0]] = indexA;
-		        	row_vec[limbSeq[1]] = indexB;
-		            row_vec[17] = 2;
-		            // add the score of parts and the connection
-		            row_vec[16] = peaks[int(indexA)] + peaks[int(indexB)] + connection_k[i][2];
-		            subset.push_back(row_vec);
-		        }
-		    }
-		    else{
-		        if(connection_k.size()==0){
-		            continue;
-		        }
-		        // A is already in the subset, find its connection B
-		        for(int i = 0; i < connection_k.size(); i++){
-		            int num = 0;
-		            float indexA = connection_k[i][0];
-		        	float indexB = connection_k[i][1];
-
-		        	for(int j = 0; j < subset.size(); j++){
-		                if(subset[j][limbSeq[2*k]] == indexA){
-		                    subset[j][limbSeq[2*k+1]] = indexB;
-		                    num = num+1;
-		                    subset[j][17] = subset[j][17] + 1;
-		                    subset[j][16] = subset[j][16] + peaks[int(indexB)] + connection_k[i][2];
-		                }
-		            }
-		            // if can not find partA in the subset, create a new subset
-		            if(num==0){
-		                vector<float> row_vec(18, 0);
-		                row_vec[limbSeq[2*k]] = indexA;
-		                row_vec[limbSeq[2*k+1]] = indexB;
-		                row_vec[17] = 2;
-		                row_vec[16] = peaks[int(indexA)] + peaks[int(indexB)] + connection_k[i][2];
-		                subset.push_back(row_vec);
-		            }
-		        }
-		    }
-			//cout << nA << " ";
-		}
-
-		//debug
-		// cout << " subset " << endl;
-		// for(int i = 0; i < subset.size(); i++){
-		//    	for(int j = 0; j < subset[0].size(); j++){
-		//         cout << subset[i][j] << " ";
-		//     }
-		//     cout << endl;
-		// }
-
-		//** joints by deleteing some rows of subset which has few parts occur
-		//cout << " joints " << endl;
-		float joints[45*MAX_PEOPLE]; //10*15*3
-		int cnt = 0;
-		for(int i = 0; i < subset.size(); i++){
-			//cout << "score: " << i << " " << subset[i][16]/subset[i][17];
-		    if (subset[i][17]>=4 && (subset[i][16]/subset[i][17])>0.4){
-		        for(int j = 0; j < 15; j++){
-		        	int idx = int(subset[i][j]);
-		        	if(idx){
-				        joints[cnt*45 + j*3 +2] = peaks[idx];
-				        joints[cnt*45 + j*3 +1] = peaks[idx-1]* origin_height/ INIT_PERSON_NET_HEIGHT;//(peaks[idx-1] - padh) * ratio_h;
-				        joints[cnt*45 + j*3] = peaks[idx-2]* origin_width/ INIT_PERSON_NET_WIDTH;//(peaks[idx-2] -padw) * ratio_w;
-				        //cout << peaks[idx-2] << " " << peaks[idx-1] << " " << peaks[idx] << endl;
-				        }
-			    	else{
-			    		joints[cnt*45 + j*3 +2] = 0;
-				        joints[cnt*45 + j*3 +1] = 0;
-				        joints[cnt*45 + j*3] = 0;
-				        //cout << 0 << " " << 0 << " " << 0 << endl;
-			    	}
-			    	//cout << joints[cnt*45 + j*3] << " " << joints[cnt*45 + j*3 +1] << " " << joints[cnt*45 + j*3 +2] << endl;
-			    }
-			    cnt++;
-		    }
-		    //cout << endl;
-		}
-
 		nc[tid].num_people[0] = cnt;
-		LOG(ERROR) << "num_people[i] = " << cnt;
+		VLOG(2) << "num_people[i] = " << cnt;
 
-		cudaMemcpy(nc[tid].joints, joints, 45*MAX_PEOPLE * sizeof(float), cudaMemcpyHostToDevice);
+
+		cudaMemcpy(nc[tid].joints, joints,
+			MAX_NUM_PARTS*3*MAX_PEOPLE * sizeof(float),
+			cudaMemcpyHostToDevice);
 
 		// debug, wrong!
 		// float *h_out = (float *) malloc(450 * sizeof(float) );
@@ -849,7 +1301,7 @@ void* processFrame(void *i){
 		if(subset.size() != 0){
 			// timer.Start();
 			//LOG(ERROR) << "Rendering";
-			render(tid); //only support batch size = 1!!!!
+			render(tid, heatmap_pointer); //only support batch size = 1!!!!
 			for(int n = 0; n < valid_data; n++){
 				frame_batch[n].numPeople = nc[tid].num_people[n];
 				frame_batch[n].gpu_computed_time = get_wall_time();
@@ -861,7 +1313,7 @@ void* processFrame(void *i){
 			}
 		}
 		else {
-			render(tid);
+			render(tid, heatmap_pointer);
 			//frame_batch[n].data should revert to 0-255
 			for(int n = 0; n < valid_data; n++){
 				frame_batch[n].numPeople = 0;
@@ -929,7 +1381,7 @@ void* buffer_and_order(void* threadargs){ //only one thread can execute this
 		bool success = global.output_queue_mated.try_pop(&f);
 		f.buffer_start_time = get_wall_time();
 		if(success){
-			LOG(ERROR) << "buffer getting " << f.index << ", waiting for " << frame_waited;
+			VLOG(4) << "buffer getting " << f.index << ", waiting for " << frame_waited;
 			global.mtx.lock();
 			while(global.dropped_index.size()!=0 && global.dropped_index.top() == frame_waited){
 				frame_waited++;
@@ -1016,7 +1468,7 @@ void* displayFrame(void *i) { //single thread
 	double last_time = get_wall_time();
   double this_time;
   float FPS = 0;
-	char fps_str[256];
+	char tmp_str[256];
 	//Mat resized_frame;
 	while(1) {
 		if (global.quit_threads) break;
@@ -1024,13 +1476,36 @@ void* displayFrame(void *i) { //single thread
 		f = global.output_queue_ordered.pop();
 		Mat wrap_frame(origin_height, origin_width, CV_8UC3, f.data_for_wrap);
 
-		snprintf(fps_str, 256, "%.1f", FPS);
-		cv::putText(wrap_frame, fps_str, cv::Point(27,37),
-			cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 4);
-		cv::putText(wrap_frame, fps_str, cv::Point(25,35),
-			cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(255,255,255), 4);
+		snprintf(tmp_str, 256, "%4.1f fps", FPS);
+		// cv::putText(wrap_frame, tmp_str, cv::Point(27,37),
+		// 	cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 2);
+		cv::putText(wrap_frame, tmp_str, cv::Point(25,35),
+			cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,255,255), 1);
+
+		snprintf(tmp_str, 256, "%4d", f.numPeople);
+		// cv::putText(wrap_frame, tmp_str, cv::Point(27,67),
+		// 	cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 1);
+		cv::putText(wrap_frame, tmp_str, cv::Point(origin_width-100+2, 35+2),
+			cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0,0,0), 2);
+		cv::putText(wrap_frame, tmp_str, cv::Point(origin_width-100, 35),
+			cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(150,150,255), 2);
 		//LOG(ERROR) << "processed";
 		//cv::resize(wrap_frame, resized_frame, Size(1920, 1080), 0, 0, CV_INTER_LINEAR);
+
+		if (global.part_to_show!=0) {
+			snprintf(tmp_str, 256, "%10s", model_descriptor->get_part_name(global.part_to_show-1).c_str());
+			cv::putText(wrap_frame, tmp_str, cv::Point(origin_width-175+1, 55+1),
+				cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255,255,255), 1);
+		}
+
+		if (!FLAGS_video.empty()) {
+			snprintf(tmp_str, 256, "Frame %6d", global.uistate.current_frame);
+			// cv::putText(wrap_frame, tmp_str, cv::Point(27,37),
+			// 	cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 2);
+			cv::putText(wrap_frame, tmp_str, cv::Point(25,55),
+				cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,255,255), 1);
+		}
+
 		imshow("video", wrap_frame);
 
 		counter++;
@@ -1054,7 +1529,7 @@ void* displayFrame(void *i) { //single thread
                   f.buffer_end_time - f.buffer_start_time,
                   this_time - f.buffer_end_time,
                   FPS);
-			LOG(ERROR) << msg;
+			LOG(INFO) << msg;
 		}
 
 
@@ -1074,20 +1549,6 @@ void* displayFrame(void *i) { //single thread
 		delete [] f.data_for_wrap;
 		delete [] f.data;
 	}
-	return nullptr;
-}
-void* listenKey(void *i) { //single thread // a b d e f part 10 11 12 13 14
-	int c;
-		//puts ("Enter text. Include a dot ('.') in a sentence to exit:");
-		do {
-			if (global.quit_threads) break;
-
-			c = getchar();
-			putchar(c);
-			if (!handleKey(c)) {
-				break;
-			}
-		} while (1);
 	return nullptr;
 }
 
@@ -1142,7 +1603,7 @@ int rtcpm() {
 			exit(-1);
 	    }
 	}
-	LOG(ERROR) << "Finish spawning " << thread_pool_size << " threads. now waiting." << "\n";
+	VLOG(3) << "Finish spawning " << thread_pool_size << " threads. now waiting." << "\n";
 
 
 	/* threads handling outputs */
@@ -1157,7 +1618,7 @@ int rtcpm() {
 			exit(-1);
 	    }
 	}
-	LOG(ERROR) << "Finish spawning " << thread_pool_size_out << " threads. now waiting." << "\n";
+	VLOG(3) << "Finish spawning " << thread_pool_size_out << " threads. now waiting." << "\n";
 
 	/* thread for buffer and ordering frame */
 	pthread_t threads_order;
@@ -1167,7 +1628,7 @@ int rtcpm() {
 		LOG(ERROR) << "Error: unable to create thread," << rc << "\n";
 		exit(-1);
     }
-	LOG(ERROR) << "Finish spawning the thread for ordering. now waiting." << "\n";
+	VLOG(3) << "Finish spawning the thread for ordering. now waiting." << "\n";
 
 	/* display */
 	pthread_t thread_display;
@@ -1176,20 +1637,7 @@ int rtcpm() {
 		LOG(ERROR) << "Error: unable to create thread," << rc << "\n";
 		exit(-1);
     }
-	LOG(ERROR) << "Finish spawning the thread for display. now waiting." << "\n";
-
-	/* keyboard listener */
-
-	// This has been replaced by handleKey and waitKey in the displayFrame loop
-	/*
-	pthread_t thread_key;
-	rc = pthread_create(&thread_key, NULL, listenKey, (void *) arg);
-	if(rc){
-		LOG(ERROR) << "Error: unable to create thread," << rc << "\n";
-		exit(-1);
-    }
-	LOG(ERROR) << "Finish spawning the thread for listen_key. now waiting." << "\n";
-	*/
+	VLOG(3) << "Finish spawning the thread for display. now waiting." << "\n";
 
 	for (int i = 0; i < thread_pool_size; i++){
 		pthread_join(threads_pool[i], NULL);
@@ -1295,9 +1743,15 @@ int main(int argc, char *argv[]) {
 		CHECK_EQ(nRead,2) << "Error, resolution format ("
 											<<  FLAGS_resolution
 											<< ") invalid, should be e.g., 960x540 ";
+		nRead = sscanf(FLAGS_camera_resolution.c_str(), "%dx%d",
+											 &camera_frame_width, &camera_frame_height);
+		CHECK_EQ(nRead,2) << "Error, camera resolution format ("
+											<<  FLAGS_camera_resolution
+											<< ") invalid, should be e.g., 1280x720";
 	}
 
 	NUM_GPU = FLAGS_num_gpu;
+
 
 	/* server warming up */
 	set_nets();
@@ -1370,7 +1824,7 @@ int main(int argc, char *argv[]) {
 }
 
 bool handleKey(int c) {
-	const std::string key2part = "0123456789qwertyuiop[]asdfghjkl;'";
+	const std::string key2part = "0123456789qwertyuiop";
 	const std::string key2stage = "zxcvbn";
 	VLOG(4) << "key: " << (char)c << " code: " << c;
 	if (c>=65505) {
@@ -1387,7 +1841,7 @@ bool handleKey(int c) {
 		return false;
 	}
 	// Rudimentary seeking in video
-	if (c=='l' || c=='k' || c=='p') {
+	if (c=='l' || c=='k' || c==' ') {
 		if (!FLAGS_video.empty()) {
 			int cur_frame = global.uistate.current_frame;
 			int frame_delta = 30;
@@ -1400,7 +1854,7 @@ bool handleKey(int c) {
 				VLOG(4) << "Rewind " << frame_delta << " frames to " << cur_frame;
 				global.uistate.current_frame-=frame_delta;
 				global.uistate.seek_to_frame = 1;
-			} else if (c=='p') {
+			} else if (c==' ') {
 				global.uistate.is_video_paused = !global.uistate.is_video_paused;
 			}
 		}
@@ -1420,12 +1874,25 @@ bool handleKey(int c) {
 	}
 	int target = -1;
 	int ind = key2part.find(c);
-	if (ind!=string::npos) {
+	if (ind!=string::npos && !global.uistate.is_shift_down) {
 		target = ind;
 	}
-	if(target >= 0 && target <= 30) {
+	if(target >= 0 && target <= 42) {
 		global.part_to_show = target;
-		LOG(ERROR) << "you set to " << target;
+	}
+
+	if (c==',' || c=='.') {
+		if (c=='.') global.part_to_show++;
+		if (c==',') global.part_to_show--;
+		if (global.part_to_show<0) {
+			global.part_to_show = 42;
+		}
+		// if (global.part_to_show>42) {
+		// 	global.part_to_show = 0;
+		// }
+		if (global.part_to_show>55) {
+			global.part_to_show = 0;
+		}
 	}
 
 	int stage = -1;

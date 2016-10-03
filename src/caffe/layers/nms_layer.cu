@@ -6,6 +6,7 @@
 #define numThreadsPerBlock_1d 16
 #define numThreadsPerBlock 256
 
+
 namespace caffe {
 
 
@@ -47,7 +48,7 @@ __global__ void nms_register_kernel(Dtype* src_pointer, int* workspace, int w, i
 
 
 template <typename Dtype>
-__global__ void writeResultKernel(int length, int* input, Dtype* src_pointer, Dtype* output, int width){
+__global__ void writeResultKernel(int length, int* input, Dtype* src_pointer, Dtype* output, int width, int max_peaks){
     __shared__ int local[numThreadsPerBlock+1]; // one more
     int globalIdx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -67,7 +68,7 @@ __global__ void writeResultKernel(int length, int* input, Dtype* src_pointer, Dt
                 int peak_loc_x = peak_loc % width;
                 int peak_loc_y = peak_loc / width;
 
-                if(peak_index <= 19){ //limitation
+                if(peak_index < max_peaks){ //limitation
 	                //output[input[globalIdx]] = globalIdx;
 	                output[(peak_index + 1) * 3] = peak_loc_x;
 	                output[(peak_index + 1) * 3 + 1] = peak_loc_y;
@@ -87,22 +88,21 @@ void NmsLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom, const vect
 	//Forward_cpu(bottom, top);
 	int num = bottom[0]->shape(0);
 	//int channel = bottom[0]->shape(1);
-	int parts_num = 15;
 	int height = bottom[0]->shape(2);
 	int width = bottom[0]->shape(3);
 	int offset = height * width;
-	int offset_dst = 33;
+	int offset_dst = (max_peaks_+1)*3;
 
 	dim3 threadsPerBlock(numThreadsPerBlock_1d, numThreadsPerBlock_1d);
 	dim3 numBlocks(updiv(width, threadsPerBlock.x), updiv(height, threadsPerBlock.y));
 
 	//std::cout << "channel: " << channel << std::endl;
 	for(int n = 0; n < num; n++){ // batch
-		for(int c = 0; c < parts_num; c++){
+		for(int c = 0; c < num_parts_; c++){
 			//std::cout << "channel: " << c << std::endl;
-			int* w_pointer1 = workspace.mutable_gpu_data() + n * parts_num * offset + c * offset;
-			Dtype* src = bottom[0]->mutable_gpu_data() + n * parts_num * offset + c * offset;
-			Dtype* dst = top[0]->mutable_gpu_data() + n * parts_num * offset_dst + c * offset_dst;
+			int* w_pointer1 = workspace.mutable_gpu_data() + n * num_parts_ * offset + c * offset;
+			Dtype* src = bottom[0]->mutable_gpu_data() + n * num_parts_ * offset + c * offset;
+			Dtype* dst = top[0]->mutable_gpu_data() + n * num_parts_ * offset_dst + c * offset_dst;
 			// old model
 			// if(c==14){
 			// 	Dtype* src = bottom[0]->mutable_gpu_data() + n * parts_num * offset + 28 * offset;
@@ -130,7 +130,7 @@ void NmsLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom, const vect
 
 			thrust::exclusive_scan(dev_ptr, dev_ptr + offset, dev_ptr); //[0,0,0,0,0,1,1,1,1,1,2,2,2,2]
 			//LOG(ERROR) << "thrust done";
-			writeResultKernel<<<updiv(offset,numThreadsPerBlock), numThreadsPerBlock>>>(offset, w_pointer1, src, dst, width);
+			writeResultKernel<<<updiv(offset,numThreadsPerBlock), numThreadsPerBlock>>>(offset, w_pointer1, src, dst, width, max_peaks_);
 			//LOG(ERROR) << "write done";
 		}
 	}

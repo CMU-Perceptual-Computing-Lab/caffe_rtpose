@@ -9,6 +9,8 @@ template <typename Dtype>
 void NmsLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top){
 	NmsParameter nms_param = this->layer_param_.nms_param();
 	threshold = nms_param.threshold();
+	num_parts_ = nms_param.num_parts();
+	max_peaks_ = nms_param.max_peaks();
 }
 
 template <typename Dtype>
@@ -17,9 +19,9 @@ void NmsLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom, const vector<B
 	vector<int> top_shape(bottom_shape);
 
 	top_shape[3] = 3;  // X, Y, score
-	top_shape[2] = 11; // 10 people + 1
-	top_shape[1] = 15;
-	
+	top_shape[2] = max_peaks_+1; // 10 people + 1
+	top_shape[1] = num_parts_;
+
 	top[0]->Reshape(top_shape);
 	workspace.Reshape(bottom_shape);
 
@@ -37,7 +39,7 @@ void NmsLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom, const vect
 	Dtype* dst_pointer = top[0]->mutable_cpu_data();
 	Dtype* src_pointer = bottom[0]->mutable_cpu_data();
 	int offset2 = oriSpatialHeight * oriSpatialWidth;
-	int offset2_dst = 22;
+	int offset2_dst = (max_peaks_+1)*2;
 
 	//stupid method
 	for(int n = 0; n < num; n++){
@@ -45,7 +47,7 @@ void NmsLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom, const vect
 		int peakCount = 0;
 
 		for (int y = 0; y < oriSpatialHeight; y++){
-			for (int x = 0; x < oriSpatialWidth; x++){	
+			for (int x = 0; x < oriSpatialWidth; x++){
 			    Dtype value = src_pointer[n * offset2 + y*oriSpatialWidth + x];
 			    if(value < threshold) continue;
 			    Dtype top = (y == 0) ? 0 : src_pointer[n * offset2 + (y-1)*oriSpatialWidth + x];

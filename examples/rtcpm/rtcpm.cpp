@@ -25,6 +25,7 @@
 #include "caffe/util/io.hpp"
 #include "caffe/util/benchmark.hpp"
 #include "caffe/util/blocking_queue.hpp"
+#include "caffe/util/render_functions.hpp"
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/contrib/contrib.hpp>
@@ -227,7 +228,7 @@ void render(int gid) {
 
 	//LOG(ERROR) << "begin render_in_cuda";
 	//LOG(ERROR) << "CPU part num" << global.part_to_show;
-	caffe::render_in_cuda_website_indi(nc[gid].canvas, origin_width, origin_height, INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT,
+	caffe::render_mpi_parts(nc[gid].canvas, origin_width, origin_height, INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT,
 									   heatmaps, boxsize, centers, poses, nc[gid].num_people, global.part_to_show);
 }
 

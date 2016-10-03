@@ -126,7 +126,7 @@ TEST_OBJS := $(TEST_CXX_OBJS) $(TEST_CU_OBJS)
 GTEST_OBJ := $(addprefix $(BUILD_DIR)/, ${GTEST_SRC:.cpp=.o})
 EXAMPLE_OBJS := $(addprefix $(BUILD_DIR)/, ${EXAMPLE_SRCS:.cpp=.o})
 # Output files for automatic dependency generation
-DEPS := ${CXX_OBJS:.o=.d} ${CU_OBJS:.o=.d} ${TEST_CXX_OBJS:.o=.d} \
+DEPS := ${EXAMPLE_OBJS:.o=.d} ${CXX_OBJS:.o=.d} ${CU_OBJS:.o=.d} ${TEST_CXX_OBJS:.o=.d} \
 	${TEST_CU_OBJS:.o=.d} $(BUILD_DIR)/${MAT$(PROJECT)_SO:.$(MAT_SO_EXT)=.d}
 # tool, example, and test bins
 TOOL_BINS := ${TOOL_OBJS:.o=.bin}
@@ -193,12 +193,12 @@ ifeq ($(USE_LMDB), 1)
 	LIBRARIES += lmdb
 endif
 ifeq ($(USE_OPENCV), 1)
-	LIBRARIES += opencv_core opencv_highgui opencv_imgproc opencv_contrib 
+	LIBRARIES += opencv_core opencv_highgui opencv_imgproc opencv_contrib
 
 	ifeq ($(OPENCV_VERSION), 3)
 		LIBRARIES += opencv_imgcodecs
 	endif
-		
+
 endif
 PYTHON_LIBRARIES ?= boost_python python2.7
 WARNINGS := -Wall -Wno-sign-compare
@@ -320,7 +320,8 @@ ifeq ($(DEBUG), 1)
 	COMMON_FLAGS += -DDEBUG -g -O0
 	NVCCFLAGS += -G
 else
-	COMMON_FLAGS += -DNDEBUG -O2
+	COMMON_FLAGS += -DNDEBUG -O3
+	#NVCCFLAGS += "--ptxas-options=-v"
 endif
 
 # cuDNN acceleration configuration.
@@ -399,7 +400,7 @@ LIBRARY_DIRS += $(BLAS_LIB)
 LIBRARY_DIRS += $(LIB_BUILD_DIR)
 
 # Automatic dependency generation (nvcc is handled separately)
-CXXFLAGS += -MMD -MP
+CXXFLAGS += -MMD -MP -march=native
 
 # Complete build flags.
 COMMON_FLAGS += $(foreach includedir,$(INCLUDE_DIRS),-I$(includedir))

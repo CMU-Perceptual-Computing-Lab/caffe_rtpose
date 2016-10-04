@@ -60,9 +60,9 @@ DEFINE_string(video, "",
 						 "Use a video file instead of the camera.");
 DEFINE_bool(fullscreen, false,
 						 "Run in fullscreen mode");
-DEFINE_string(caffemodel, "model/pose_iter_264000.caffemodel",
+DEFINE_string(caffemodel, "model/mpi/pose_iter_264000.caffemodel",
 							"Caffe model.");
-DEFINE_string(caffeproto, "model/pose_deploy_linevec.prototxt",
+DEFINE_string(caffeproto, "model/mpi/pose_deploy_linevec.prototxt",
 							"Caffe deploy prototxt.");
 
 DEFINE_string(resolution, "960x540",
@@ -339,8 +339,8 @@ void* getFrameFromCam(void *i){
 			CHECK(cap.open(FLAGS_video)) << "Couldn't open video file " << FLAGS_video;
 			target_frame_rate = cap.get(CV_CAP_PROP_FPS);
 			target_frame_time = 1.0/target_frame_rate;
-			cap.set(CV_CAP_PROP_POS_FRAMES, 1900);
-			global.uistate.is_video_paused = true;
+			// cap.set(CV_CAP_PROP_POS_FRAMES, 1900);
+			// global.uistate.is_video_paused = true;
 		}
 
     int global_counter = 1;
@@ -390,7 +390,6 @@ void* getFrameFromCam(void *i){
 				// From camera, just increase counter.
 				frame_counter++;
 			}
-
 
 
 			resize(image_uchar, image_uchar, Size(origin_width, origin_height), 0, 0, CV_INTER_AREA);

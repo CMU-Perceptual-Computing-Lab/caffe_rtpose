@@ -16,7 +16,7 @@
 
 #define LIMB_MPI {0,1, 2,3, 3,4, 5,6, 6,7, 8,9, 9,10, 11,12, 12,13}
 #define LIMB_COCO {1,2, 1,5, 2,3, 3,4, 5,6, 6,7, 1,8, 8,9, 9,10, 1,11, 11,12, 12,13, 1,0, 0,14, 14,16, 0,15, 15,17, 2,16, 5,17}
-
+#define LIMB_COCO_NOEAR {1,2, 1,5, 2,3, 3,4, 5,6, 6,7, 1,8, 8,9, 9,10, 1,11, 11,12, 12,13, 1,0, 0,14, 14,16, 0,15, 15,17}
 namespace caffe {
 
 
@@ -353,7 +353,7 @@ __global__ void render_pose_coco_parts(float* dst_pointer, int w_canvas, int h_c
 
   __syncthreads();
 
-  const int limb[] = LIMB_COCO;
+  const int limb[] = LIMB_COCO_NOEAR;
   const int nlimb = sizeof(limb)/(2*sizeof(int));
 
   const int color[27] =   {255,   0, 0,
@@ -408,9 +408,9 @@ __global__ void render_pose_coco_parts(float* dst_pointer, int w_canvas, int h_c
           float judge = A * A / a_sqrt + B * B / b_sqrt;
           float minV = 0;
           if(judge>= minV && judge <= 1){
-            b = (1-alpha) * b + alpha * color[(p%nColor)*3+2];
-            g = (1-alpha) * g + alpha * color[(p%nColor)*3+1];
-            r = (1-alpha) * r + alpha * color[(p%nColor)*3];
+            b = (1-alpha) * b + alpha * color[(l%nColor)*3+2];
+            g = (1-alpha) * g + alpha * color[(l%nColor)*3+1];
+            r = (1-alpha) * r + alpha * color[(l%nColor)*3];
             //plotted = 1;
           }
         }

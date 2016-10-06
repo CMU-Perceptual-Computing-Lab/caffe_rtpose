@@ -23,6 +23,7 @@
 #include "caffe/common.hpp"
 #include "caffe/layers/switch_layer.hpp"
 #include "caffe/layers/nms_layer.hpp"
+#include "caffe/layers/imresize_layer.hpp"
 #include "caffe/net.hpp"
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/util/db.hpp"
@@ -66,7 +67,9 @@ DEFINE_string(caffeproto, "model/mpi/pose_deploy_linevec.prototxt",
 							"Caffe deploy prototxt.");
 
 DEFINE_string(resolution, "960x540",
-						 "The image resolution to run the detector on.");
+						 "The image resolution (display).");
+DEFINE_string(net_resolution, "656x368",
+						 "Multiples of 16.");
 DEFINE_string(camera_resolution, "1280x720",
 						 "Size of the camera frames to ask for.");
 
@@ -82,12 +85,14 @@ int origin_height=540; //540 //720 //480
 // These are set to match FLAGS_camera_resolution
 int camera_frame_width=1920;
 int camera_frame_height=1080;
+int init_person_net_height = (368);
+int init_person_net_width = (356);
 
 #define boxsize 368
 #define fixed_scale_height 368
 #define peak_blob_offset 33
-#define INIT_PERSON_NET_HEIGHT 368
-#define INIT_PERSON_NET_WIDTH  656 //496  //656
+#define INIT_PERSON_NET_HEIGHT init_person_net_height
+#define INIT_PERSON_NET_WIDTH  init_person_net_width
 #define MAX_PEOPLE_IN_BATCH 32
 #define BUFFER_SIZE 4    //affects latency
 #define MAX_LENGTH_INPUT_QUEUE 500 //affects memory usage
@@ -95,8 +100,10 @@ int camera_frame_height=1080;
 #define batch_size 1
 
 #define MAX_NUM_PARTS 70
-#define MAX_PEOPLE 32
+// This is defined in render_functions.hpp
+#define MAX_PEOPLE RENDER_MAX_PEOPLE
 #define MAX_MAX_PEAKS 64
+
 
 float start_scale = 0.9;
 int NUM_GPU;  //4
@@ -137,6 +144,13 @@ struct GLOBAL {
 	int part_to_show;
 	float target_size[1][2];
 	bool quit_threads;
+
+	// Parameters
+	float nms_threshold;
+	int connect_min_subset_cnt;
+	float connect_min_subset_score;
+	float connect_inter_threshold;
+	int connect_inter_min_above_threshold;
 
 	struct UIState {
 		UIState() :
@@ -238,6 +252,15 @@ void warmup(int device_id){
 		(caffe::NmsLayer<float>*)nc[device_id].person_net->layer_by_name("nms").get();
 	nc[device_id].nms_max_peaks = nms_layer->GetMaxPeaks();
 
+
+	caffe::ImResizeLayer<float> *resize_layer =
+		(caffe::ImResizeLayer<float>*)nc[device_id].person_net->layer_by_name("resize").get();
+
+	start_scale = resize_layer->GetStartScale(); // TODO: Clean this up
+	LOG(INFO) << "start_scale = " << start_scale;
+
+	nc[device_id].nms_max_peaks = nms_layer->GetMaxPeaks();
+
 	// CHECK_EQ(nc[device_id].nms_max_peaks, 20)
 	// 	<< "num_peaks not 20";
 
@@ -248,8 +271,19 @@ void warmup(int device_id){
 
 	if (nc[device_id].nms_num_parts==15) {
 		nc[device_id].modeldesc = new MPIModelDescriptor();
+		global.nms_threshold = nms_layer->GetThreshold();
+		global.connect_min_subset_cnt = 3;
+		global.connect_min_subset_score = 0.4;
+		global.connect_inter_threshold = 0.01;
+		global.connect_inter_min_above_threshold = 8;
+		LOG(INFO) << "Selecting MPI model.";
 	} else if (nc[device_id].nms_num_parts==18) {
 		nc[device_id].modeldesc = new COCOModelDescriptor();
+		global.nms_threshold = 0.12;
+		global.connect_min_subset_cnt = 3;
+		global.connect_min_subset_score = 0.8;
+		global.connect_inter_threshold = 0.25;
+		global.connect_inter_min_above_threshold = 9;
 	} else {
 		CHECK(0) << "Unknown number of parts! Couldn't set model";
 	}
@@ -317,6 +351,7 @@ void render(int gid, float *heatmaps /*GPU*/) {
 
 	//LOG(ERROR) << "begin render_in_cuda";
 	//LOG(ERROR) << "CPU part num" << global.part_to_show;
+	double tic = get_wall_time();
 	if (nc[gid].modeldesc->num_parts()==15) {
 		caffe::render_mpi_parts(nc[gid].canvas, origin_width, origin_height, INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT,
 									   heatmaps, boxsize, centers, poses, nc[gid].num_people, global.part_to_show);
@@ -324,6 +359,7 @@ void render(int gid, float *heatmaps /*GPU*/) {
 		caffe::render_coco_parts(nc[gid].canvas, origin_width, origin_height, INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT,
 									   heatmaps, boxsize, centers, poses, nc[gid].num_people, global.part_to_show);
   }
+	VLOG(2) << "Render time " << (get_wall_time()-tic)*1000.0 << " ms.";
 }
 
 
@@ -346,12 +382,12 @@ void* getFrameFromCam(void *i){
     int global_counter = 1;
 		int frame_counter = 0;
 		Mat image_uchar;
+		Mat image_uchar_prev;
 		double last_frame_time = -1;
     while(1) {
 			if (global.quit_threads) break;
 
 			cap >> image_uchar;
-
 			// Keep a count of how many frames we've seen in the video
 			if (!FLAGS_video.empty()) {
 				if (global.uistate.seek_to_frame!=-1) {
@@ -388,11 +424,15 @@ void* getFrameFromCam(void *i){
 				last_frame_time = cur_frame_time;
 			}	else {
 				// From camera, just increase counter.
+				if (global.uistate.is_video_paused) {
+					image_uchar = image_uchar_prev;
+				}
+				image_uchar_prev = image_uchar;
 				frame_counter++;
 			}
 
 
-			resize(image_uchar, image_uchar, Size(origin_width, origin_height), 0, 0, CV_INTER_AREA);
+		resize(image_uchar, image_uchar, Size(origin_width, origin_height), 0, 0, CV_INTER_AREA);
 
   		//char imgname[50];
 		//sprintf(imgname, "../dome/%03d.jpg", global_counter);
@@ -450,6 +490,8 @@ void* getFrameFromCam(void *i){
 			// padw = (INIT_PERSON_NET_WIDTH - target_width)/2;
 			// padh = (INIT_PERSON_NET_HEIGHT - target_height)/2;
 			// LOG(ERROR) << "padw " << padw << " padh " << padh;
+			CHECK_LE(target_width, INIT_PERSON_NET_WIDTH);
+			CHECK_LE(target_height, INIT_PERSON_NET_HEIGHT);
 
 			resize(image_uchar, image_temp, Size(target_width, target_height), 0, 0, CV_INTER_AREA);
 			process_and_pad_image(f.data + i * offset, image_temp, INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT, 1);
@@ -557,7 +599,7 @@ int connectLimbs(
 			}
 
 			vector< vector<double>> temp;
-			const int num_inter = 20;
+			const int num_inter = 10;
 
 			for(int i = 1; i <= nA; i++){
 				for(int j = 1; j <= nB; j++){
@@ -585,6 +627,9 @@ int connectLimbs(
 		float d_x = candB[j*3] - candA[i*3];
 		float d_y = candB[j*3+1] - candA[i*3+1];
 		float norm_vec = sqrt( pow(d_x,2) + pow(d_y,2) );
+		if (norm_vec<1e-6) {
+			continue;
+		}
 		float vec_x = d_x/norm_vec;
 		float vec_y = d_y/norm_vec;
 
@@ -596,14 +641,14 @@ int connectLimbs(
 			int mx = round(s_x + lm*d_x/num_inter);
 			int idx = my * INIT_PERSON_NET_WIDTH + mx;
 			float score = (vec_x*map_x[idx] + vec_y*map_y[idx]);
-			if(score > 0.01){
-				sum = sum + sqrt(score);
+			if(score > global.connect_inter_threshold){
+				sum = sum + score;
 				count ++;
 			}
 		}
 		//float score = sum / count; // + std::min((130/dist-1),0.f)
 
-		if(count > num_inter*0.8){//num_inter*0.8){ //thre/2
+		if(count > global.connect_inter_min_above_threshold){//num_inter*0.8){ //thre/2
 			// parts score + cpnnection score
 			vector<double> row_vec(4, 0);
 			row_vec[3] = sum/count + candA[i*3+2] + candB[j*3+2]; //score_all
@@ -733,13 +778,13 @@ else{
 int cnt = 0;
 for(int i = 0; i < subset.size(); i++){
 	//cout << "score: " << i << " " << subset[i][16]/subset[i][17];
-	if (subset[i][SUBSET_CNT]>=3 && (subset[i][SUBSET_SCORE]/subset[i][SUBSET_CNT])>0.4){
+	if (subset[i][SUBSET_CNT]>=global.connect_min_subset_cnt && (subset[i][SUBSET_SCORE]/subset[i][SUBSET_CNT])>global.connect_min_subset_score){
 		for(int j = 0; j < NUM_PARTS; j++){
 			int idx = int(subset[i][j]);
 			if(idx){
 				joints[cnt*NUM_PARTS*3 + j*3 +2] = peaks[idx];
-				joints[cnt*NUM_PARTS*3 + j*3 +1] = peaks[idx-1]* origin_height/ INIT_PERSON_NET_HEIGHT;//(peaks[idx-1] - padh) * ratio_h;
-				joints[cnt*NUM_PARTS*3 + j*3] = peaks[idx-2]* origin_width/ INIT_PERSON_NET_WIDTH;//(peaks[idx-2] -padw) * ratio_w;
+				joints[cnt*NUM_PARTS*3 + j*3 +1] = peaks[idx-1]* origin_height/ (float)INIT_PERSON_NET_HEIGHT;//(peaks[idx-1] - padh) * ratio_h;
+				joints[cnt*NUM_PARTS*3 + j*3] = peaks[idx-2]* origin_width/ (float)INIT_PERSON_NET_WIDTH;//(peaks[idx-2] -padw) * ratio_w;
 				//cout << peaks[idx-2] << " " << peaks[idx-1] << " " << peaks[idx] << endl;
 			}
 			else{
@@ -804,7 +849,7 @@ int distanceThresholdPeaks(const float *in_peaks, int max_peaks,
 			}
 		}
 		// if (num_in_peaks!=num_out_peaks) {
-			LOG(INFO) << "Part: " << p << " in peaks: "<< num_in_peaks << " out: " << num_out_peaks;
+			//LOG(INFO) << "Part: " << p << " in peaks: "<< num_in_peaks << " out: " << num_out_peaks;
 		// }
 		popeaks[0] = float(num_out_peaks);
 		total_peaks += num_out_peaks;
@@ -836,8 +881,8 @@ int connectLimbsCOCO(
 		const int peaks_offset = 3*(max_peaks+1);
 
 		const float *peaks = in_peaks;
-		//float peaks2[(MAX_MAX_PEAKS+1)*MAX_NUM_PARTS*3];
-		//distanceThresholdPeaks(in_peaks, max_peaks, peaks2, modeldesc);
+		//float peaks[(MAX_MAX_PEAKS+1)*MAX_NUM_PARTS*3]={0};
+		//distanceThresholdPeaks(in_peaks, max_peaks, peaks, modeldesc);
 		subset.clear();
 		connection.clear();
 
@@ -876,14 +921,15 @@ int connectLimbsCOCO(
 									continue;
 							}
 					}
-					// if (num!=0) {
-					// 	LOG(INFO) << " else if(nA==0) shouldn't have any nB already assigned?";
-					// }
-					vector<double> row_vec(SUBSET_SIZE, 0);
-					row_vec[ limbSeq[2*k+1] ] = limbSeq[2*k+1]*peaks_offset + i*3 + 2; //store the index
-					row_vec[SUBSET_CNT] = 1; //last number in each row is the parts number of that person
-					row_vec[SUBSET_SCORE] = candB[i*3+2]; //second last number in each row is the total score
-					subset.push_back(row_vec);
+					if (num!=0) {
+						//LOG(INFO) << " else if(nA==0) shouldn't have any nB already assigned?";
+					} else {
+						vector<double> row_vec(SUBSET_SIZE, 0);
+						row_vec[ limbSeq[2*k+1] ] = limbSeq[2*k+1]*peaks_offset + i*3 + 2; //store the index
+						row_vec[SUBSET_CNT] = 1; //last number in each row is the parts number of that person
+						row_vec[SUBSET_SCORE] = candB[i*3+2]; //second last number in each row is the total score
+						subset.push_back(row_vec);
+					}
 					//LOG(INFO) << "nA==0 New subset on part " << k << " subsets: " << subset.size();
 				}
 				continue;
@@ -913,7 +959,7 @@ int connectLimbsCOCO(
 			}
 
 			vector< vector<double>> temp;
-			const int num_inter = 20;
+			const int num_inter = 10;
 
 			for(int i = 1; i <= nA; i++){
 				for(int j = 1; j <= nB; j++){
@@ -921,7 +967,11 @@ int connectLimbsCOCO(
 					float s_y = candA[i*3+1];
 					float d_x = candB[j*3] - candA[i*3];
 					float d_y = candB[j*3+1] - candA[i*3+1];
-					float norm_vec = sqrt( pow(d_x,2) + pow(d_y,2) );
+					float norm_vec = sqrt( d_x*d_x + d_y*d_y );
+					if (norm_vec<1e-6) {
+						// The peaks are coincident. Don't connect them.
+						continue;
+					}
 					float vec_x = d_x/norm_vec;
 					float vec_y = d_y/norm_vec;
 
@@ -933,14 +983,14 @@ int connectLimbsCOCO(
 						int mx = round(s_x + lm*d_x/num_inter);
 						int idx = my * INIT_PERSON_NET_WIDTH + mx;
 						float score = (vec_x*map_x[idx] + vec_y*map_y[idx]);
-						if(score > 0.1){
-							sum = sum + sqrt(score);
+						if(score > global.connect_inter_threshold){
+							sum = sum + score;
 							count ++;
 						}
 					}
 					//float score = sum / count; // + std::min((130/dist-1),0.f)
 
-					if(count > 16){//num_inter*0.8){ //thre/2
+					if(count > global.connect_inter_min_above_threshold){//num_inter*0.8){ //thre/2
 						// parts score + cpnnection score
 						vector<double> row_vec(4, 0);
 						row_vec[3] = sum/count + candA[i*3+2] + candB[j*3+2]; //score_all
@@ -1024,30 +1074,30 @@ int connectLimbsCOCO(
 					//LOG(INFO) << "New subset on part " << k << " subsets: " << subset.size();
 					subset.push_back(row_vec);
 				}
-			} /*else if(k==16 || k==17){ // TODO: Check k numbers?
+			}/* else if(k==17 || k==18){ // TODO: Check k numbers?
 				//   %add 15 16 connection
 				for(int i = 0; i < connection_k.size(); i++){
-				double indexA = connection_k[i][0];
-				double indexB = connection_k[i][1];
+					double indexA = connection_k[i][0];
+					double indexB = connection_k[i][1];
 
-				for(int j = 0; j < subset.size(); j++){
-				// if subset(j, indexA) == partA(i) && subset(j, indexB) == 0
-				// 		subset(j, indexB) = partB(i);
-				// elseif subset(j, indexB) == partB(i) && subset(j, indexA) == 0
-				// 		subset(j, indexA) = partA(i);
-				// end
-				if(subset[j][limbSeq[2*k]] == indexA && subset[j][limbSeq[2*k+1]]==0){
-				subset[j][limbSeq[2*k+1]] = indexB;
-			} else if (subset[j][limbSeq[2*k+1]] == indexB && subset[j][limbSeq[2*k]]==0){
-			subset[j][limbSeq[2*k]] = indexA;
-		}
-	}
-	continue;
-}
-} */ else{
-if(connection_k.size()==0){
-	continue;
-}
+					for(int j = 0; j < subset.size(); j++){
+					// if subset(j, indexA) == partA(i) && subset(j, indexB) == 0
+					// 		subset(j, indexB) = partB(i);
+					// elseif subset(j, indexB) == partB(i) && subset(j, indexA) == 0
+					// 		subset(j, indexA) = partA(i);
+					// end
+						if(subset[j][limbSeq[2*k]] == indexA && subset[j][limbSeq[2*k+1]]==0){
+							subset[j][limbSeq[2*k+1]] = indexB;
+						} else if (subset[j][limbSeq[2*k+1]] == indexB && subset[j][limbSeq[2*k]]==0){
+							subset[j][limbSeq[2*k]] = indexA;
+						}
+				}
+				continue;
+			}
+		}*/ else{
+			if(connection_k.size()==0){
+				continue;
+			}
 // A is already in the subset, find its connection B
 for(int i = 0; i < connection_k.size(); i++){
 	int num = 0;
@@ -1091,13 +1141,16 @@ for(int i = 0; i < connection_k.size(); i++){
 int cnt = 0;
 for(int i = 0; i < subset.size(); i++){
 	//cout << "score: " << i << " " << subset[i][16]/subset[i][17];
-	if (subset[i][SUBSET_CNT]>=3 && (subset[i][SUBSET_SCORE]/subset[i][SUBSET_CNT])>0.4){
+	if (subset[i][SUBSET_CNT]<1) {
+		LOG(INFO) << "BAD SUBSET_CNT";
+	}
+	if (subset[i][SUBSET_CNT]>=global.connect_min_subset_cnt && (subset[i][SUBSET_SCORE]/subset[i][SUBSET_CNT])>global.connect_min_subset_score){
 		for(int j = 0; j < NUM_PARTS; j++){
 			int idx = int(subset[i][j]);
 			if(idx){
 				joints[cnt*NUM_PARTS*3 + j*3 +2] = peaks[idx];
-				joints[cnt*NUM_PARTS*3 + j*3 +1] = peaks[idx-1]* origin_height/ INIT_PERSON_NET_HEIGHT;//(peaks[idx-1] - padh) * ratio_h;
-				joints[cnt*NUM_PARTS*3 + j*3] = peaks[idx-2]* origin_width/ INIT_PERSON_NET_WIDTH;//(peaks[idx-2] -padw) * ratio_w;
+				joints[cnt*NUM_PARTS*3 + j*3 +1] = peaks[idx-1]* origin_height/ (float)INIT_PERSON_NET_HEIGHT;//(peaks[idx-1] - padh) * ratio_h;
+				joints[cnt*NUM_PARTS*3 + j*3] = peaks[idx-2]* origin_width/ (float)INIT_PERSON_NET_WIDTH;//(peaks[idx-2] -padw) * ratio_w;
 				//cout << peaks[idx-2] << " " << peaks[idx-1] << " " << peaks[idx] << endl;
 			}
 			else{
@@ -1134,6 +1187,9 @@ void* processFrame(void *i){
 	const boost::shared_ptr< caffe::Blob< float > > heatmap_blob = nc[tid].person_net->blob_by_name("resized_map");
 	const boost::shared_ptr< caffe::Blob< float > > joints_blob = nc[tid].person_net->blob_by_name("joints");
 
+	caffe::NmsLayer<float> *nms_layer =
+		(caffe::NmsLayer<float>*)nc[tid].person_net->layer_by_name("nms").get();
+
 	//while(!empty){
 	while(1){
 		if (global.quit_threads) break;
@@ -1147,7 +1203,7 @@ void* processFrame(void *i){
 				f.gpu_fetched_time = get_wall_time();
 				double elaspsed_time = f.gpu_fetched_time - f.commit_time;
 				//LOG(ERROR) << "frame " << f.index << " is copied to GPU after " << elaspsed_time << " sec";
-				if(elaspsed_time > 0.1*batch_size){ //0.1*batch_size
+				if(elaspsed_time > 0.1) {//0.1*batch_size){ //0.1*batch_size
 					//drop frame
 					VLOG(1) << "skip frame " << f.index;
 					delete [] f.data;
@@ -1159,6 +1215,8 @@ void* processFrame(void *i){
 					global.mtx.unlock();
 					continue;
 				}
+				//double tic1  = get_wall_time();
+
 				cudaMemcpy(nc[tid].canvas, f.data_for_mat, origin_width * origin_height * 3 * sizeof(float), cudaMemcpyHostToDevice);
 
 				frame_batch[0] = f;
@@ -1167,6 +1225,7 @@ void* processFrame(void *i){
 
 				cudaMemcpy(pointer + 0 * offset, frame_batch[0].data, batch_size * offset * sizeof(float), cudaMemcpyHostToDevice);
 				valid_data++;
+				//VLOG(2) << "Host->device " << (get_wall_time()-tic1)*1000.0 << " ms.";
 			}
 			else {
 				//empty = true;
@@ -1196,6 +1255,8 @@ void* processFrame(void *i){
 		//timer.Start();
 		//LOG(ERROR) << "GPU " << tid << ": Running forward person_net";
 		//nc.person_net->ForwardFromTo(0,nlayer-1);
+
+		nms_layer->SetThreshold(global.nms_threshold);
 		nc[tid].person_net->ForwardFrom(0);
 		VLOG(2) << "CNN time " << (get_wall_time()-f.gpu_fetched_time)*1000.0 << " ms.";
 				//cudaDeviceSynchronize();
@@ -1473,6 +1534,7 @@ void* displayFrame(void *i) { //single thread
 		if (global.quit_threads) break;
 
 		f = global.output_queue_ordered.pop();
+		double tic = get_wall_time();
 		Mat wrap_frame(origin_height, origin_width, CV_8UC3, f.data_for_wrap);
 
 		snprintf(tmp_str, 256, "%4.1f fps", FPS);
@@ -1506,7 +1568,6 @@ void* displayFrame(void *i) { //single thread
 		}
 
 		imshow("video", wrap_frame);
-
 		counter++;
 
 		if(counter % 30 == 0){
@@ -1531,6 +1592,9 @@ void* displayFrame(void *i) { //single thread
 			LOG(INFO) << msg;
 		}
 
+		delete [] f.data_for_mat;
+		delete [] f.data_for_wrap;
+		delete [] f.data;
 
 		//LOG(ERROR) << msg;
 		int key = waitKey(1);
@@ -1538,15 +1602,14 @@ void* displayFrame(void *i) { //single thread
 			// TODO: sync issues?
 			break;
 		}
+
+		VLOG(2) << "Display time " << (get_wall_time()-tic)*1000.0 << " ms.";
 		//LOG(ERROR) << "showed_and_waited";
 
 		// char filename[256];
 		// sprintf(filename, "../result/frame%04d.jpg", f.index); //counter
 		// imwrite(filename, wrap_frame);
 		// LOG(ERROR) << "Saved output " << counter;
-		delete [] f.data_for_mat;
-		delete [] f.data_for_wrap;
-		delete [] f.data;
 	}
 	return nullptr;
 }
@@ -1747,6 +1810,12 @@ int main(int argc, char *argv[]) {
 		CHECK_EQ(nRead,2) << "Error, camera resolution format ("
 											<<  FLAGS_camera_resolution
 											<< ") invalid, should be e.g., 1280x720";
+		nRead = sscanf(FLAGS_net_resolution.c_str(), "%dx%d",
+											 &init_person_net_width, &init_person_net_height);
+		CHECK_EQ(nRead,2) << "Error, net resolution format ("
+											<<  FLAGS_net_resolution
+											<< ") invalid, should be e.g., 656x368 (multiples of 16)";
+
 	}
 
 	NUM_GPU = FLAGS_num_gpu;
@@ -1853,9 +1922,10 @@ bool handleKey(int c) {
 				VLOG(4) << "Rewind " << frame_delta << " frames to " << cur_frame;
 				global.uistate.current_frame-=frame_delta;
 				global.uistate.seek_to_frame = 1;
-			} else if (c==' ') {
-				global.uistate.is_video_paused = !global.uistate.is_video_paused;
 			}
+		}
+		if (c==' ') {
+			global.uistate.is_video_paused = !global.uistate.is_video_paused;
 		}
 	}
 	if (c=='f') {
@@ -1878,6 +1948,31 @@ bool handleKey(int c) {
 	}
 	if(target >= 0 && target <= 42) {
 		global.part_to_show = target;
+	}
+	if (c=='-' || c=='=') {
+		if (c=='-') global.nms_threshold -= 0.005;
+		if (c=='=') global.nms_threshold += 0.005;
+		LOG(INFO) << "nms_threshold: " << global.nms_threshold;
+	}
+	if (c=='_' || c=='+') {
+		if (c=='_') global.connect_min_subset_score -= 0.005;
+		if (c=='+') global.connect_min_subset_score += 0.005;
+		LOG(INFO) << "connect_min_subset_score: " << global.connect_min_subset_score;
+	}
+	if (c=='[' || c==']') {
+		if (c=='[') global.connect_inter_threshold -= 0.005;
+		if (c==']') global.connect_inter_threshold += 0.005;
+		LOG(INFO) << "connect_inter_threshold: " << global.connect_inter_threshold;
+	}
+	if (c=='{' || c=='}') {
+		if (c=='{') global.connect_inter_min_above_threshold -= 1;
+		if (c=='}') global.connect_inter_min_above_threshold += 1;
+		LOG(INFO) << "connect_inter_min_above_threshold: " << global.connect_inter_min_above_threshold;
+	}
+	if (c==';' || c=='\'') {
+		if (c==';') global.connect_min_subset_cnt -= 1;
+		if (c=='\'') global.connect_min_subset_cnt += 1;
+		LOG(INFO) << "connect_min_subset_cnt: " << global.connect_min_subset_cnt;
 	}
 
 	if (c==',' || c=='.') {

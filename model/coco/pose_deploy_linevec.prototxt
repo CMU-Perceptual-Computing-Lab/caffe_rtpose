@@ -2995,7 +2995,7 @@ layer {
   imresize_param {
     factor: 8
     scale_gap: 0.1
-    start_scale: 0.9
+    start_scale: 1.0
     #target_spatial_width: 368
     #target_spatial_height: 368
   }

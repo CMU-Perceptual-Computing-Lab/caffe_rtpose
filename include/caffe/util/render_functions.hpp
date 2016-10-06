@@ -10,6 +10,8 @@
 #include "caffe/util/device_alternate.hpp"
 #include "caffe/util/mkl_alternate.hpp"
 
+#define RENDER_MAX_PEOPLE 64
+
 namespace caffe {
 
 void render_mpi_parts(float* canvas, int w_canvas, int h_canvas, int w_net, int h_net,

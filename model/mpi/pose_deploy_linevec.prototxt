@@ -3006,6 +3006,8 @@ layer {
   bottom: "resized_map"
   top: "joints"
   nms_param {
-    threshold: 0.3
+    threshold: 0.6
+    max_peaks: 20
+    num_parts: 15
   }
 }

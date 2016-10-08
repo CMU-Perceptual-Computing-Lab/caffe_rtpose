@@ -2994,8 +2994,13 @@ layer {
   top: "resized_map"
   imresize_param {
     factor: 8
+<<<<<<< HEAD
     scale_gap: 0.3
     start_scale: 0.9
+=======
+    scale_gap: 0.1
+    start_scale: 1.0
+>>>>>>> be2a229176a464788d466743c5985cbef1cd77ba
     #target_spatial_width: 368
     #target_spatial_height: 368
   }

@@ -108,7 +108,7 @@ void NmsLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom, const vect
 			// 	Dtype* src = bottom[0]->mutable_gpu_data() + n * parts_num * offset + 28 * offset;
 			// }
 
-			nms_register_kernel<<<numBlocks, threadsPerBlock>>>(src, w_pointer1, width, height, threshold);//[0,0,0,0,1,0,0,0,0,1,0,0,0,0]
+			nms_register_kernel<<<numBlocks, threadsPerBlock>>>(src, w_pointer1, width, height, threshold_);//[0,0,0,0,1,0,0,0,0,1,0,0,0,0]
 			//LOG(ERROR) << "register done";
 			thrust::device_ptr<int> dev_ptr = thrust::device_pointer_cast(w_pointer1);
 			//LOG(ERROR) << "pointer done";

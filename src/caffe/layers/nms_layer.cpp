@@ -8,7 +8,7 @@ namespace caffe {
 template <typename Dtype>
 void NmsLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top){
 	NmsParameter nms_param = this->layer_param_.nms_param();
-	threshold = nms_param.threshold();
+	threshold_ = nms_param.threshold();
 	num_parts_ = nms_param.num_parts();
 	max_peaks_ = nms_param.max_peaks();
 }
@@ -49,7 +49,7 @@ void NmsLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom, const vect
 		for (int y = 0; y < oriSpatialHeight; y++){
 			for (int x = 0; x < oriSpatialWidth; x++){
 			    Dtype value = src_pointer[n * offset2 + y*oriSpatialWidth + x];
-			    if(value < threshold) continue;
+			    if(value < threshold_) continue;
 			    Dtype top = (y == 0) ? 0 : src_pointer[n * offset2 + (y-1)*oriSpatialWidth + x];
 			    Dtype bottom = (y == oriSpatialHeight - 1) ? 0 : src_pointer[n * offset2 + (y+1)*oriSpatialWidth + x];
 			    Dtype left = (x == 0) ? 0 : src_pointer[n * offset2 + y*oriSpatialWidth + (x-1)];

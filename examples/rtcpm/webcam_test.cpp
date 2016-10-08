@@ -11,7 +11,6 @@ using namespace cv;
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/util/db.hpp"
 #include "caffe/util/io.hpp"
-#include "caffe/vision_layers.hpp"
 #include "caffe/util/benchmark.hpp"
 #include "caffe/util/blocking_queue.hpp"
 
@@ -48,7 +47,7 @@ int main(int argc, char** argv)
           if( frame.empty() ) break; // end of video stream
           imshow("stream", frame);
           if( waitKey(10) == 27 ) break; // stop capturing by pressing ESC
-          
+
           count++;
 
           if(count % 10 == 0){

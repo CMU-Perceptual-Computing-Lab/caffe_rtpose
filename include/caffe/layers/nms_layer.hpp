@@ -23,6 +23,8 @@ class NmsLayer : public Layer<Dtype> {
 
   virtual inline int GetMaxPeaks() const { return max_peaks_; }
   virtual inline int GetNumParts() const { return num_parts_; }
+  virtual inline float GetThreshold() const { return threshold_; }
+  virtual inline void SetThreshold(float threshold) { threshold_ = threshold; }
 
  protected:
   virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
@@ -36,7 +38,7 @@ class NmsLayer : public Layer<Dtype> {
 
   Blob<int> workspace; //only used by gpu
   //thrust::device_vector<Dtype> workspace;
-  Dtype threshold;
+  Dtype threshold_;
   int num_parts_;
   int max_peaks_;
 };

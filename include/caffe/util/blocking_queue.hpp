@@ -18,6 +18,7 @@ struct Frame {
   double buffer_end_time;
   int index;  // coco's id
   int numPeople;
+  int video_frame_number;
 
   //only used for coco
   int counter;

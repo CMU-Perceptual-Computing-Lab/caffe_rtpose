@@ -22,6 +22,10 @@ class ImResizeLayer : public Layer<Dtype> {
   virtual inline int ExactNumTopBlobs() const { return 1; }
   void setTargetDimenions(int nw, int nh);
 
+  void SetStartScale(float astart_scale) { start_scale = astart_scale; }
+  float GetStartScale() { return start_scale; }
+  float GetScaleGap() { return scale_gap; }
+
  protected:
   virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top);

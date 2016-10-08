@@ -261,6 +261,38 @@ class BilinearFiller : public Filler<Dtype> {
   }
 };
 
+template <typename Dtype>
+class BicubicFiller : public Filler<Dtype> {
+  inline Dtype cubic_spl(double s) {
+    const double a =-0.5;
+    s = fabs(s);
+    if (s>=0 && s<=1) {
+      return (a+2.0) * (s*s*s) - (a+3.0)  * (s*s)  + 1.0;
+    }
+    if (s<2) {
+      return a*s*s*s - 5*a*s*s + 8*a*s - 4*a;
+    }
+    return 0;
+  }
+ public:
+  explicit BicubicFiller(const FillerParameter& param)
+      : Filler<Dtype>(param) {}
+  virtual void Fill(Blob<Dtype>* blob) {
+    CHECK_EQ(blob->num_axes(), 4) << "Blob must be 4 dim.";
+    CHECK_EQ(blob->width(), blob->height()) << "Filter must be square";
+    Dtype* data = blob->mutable_cpu_data();
+    int f = ceil(blob->width() / 4.);
+    float c = (4 * f - 1 - f % 4) / (2. * f);
+    for (int i = 0; i < blob->count(); ++i) {
+      float x = i % blob->width();
+      float y = (i / blob->width()) % blob->height();
+      data[i] = cubic_spl(x / f - c) * cubic_spl(y / f - c);
+    }
+    CHECK_EQ(this->filler_param_.sparse(), -1)
+         << "Sparsity not supported by this Filler.";
+  }
+};
+
 /**
  * @brief Get a specific filler from the specification given in FillerParameter.
  *
@@ -284,6 +316,8 @@ Filler<Dtype>* GetFiller(const FillerParameter& param) {
     return new MSRAFiller<Dtype>(param);
   } else if (type == "bilinear") {
     return new BilinearFiller<Dtype>(param);
+  } else if (type == "bicubic") {
+    return new BicubicFiller<Dtype>(param);
   } else {
     CHECK(false) << "Unknown filler name: " << param.type();
   }

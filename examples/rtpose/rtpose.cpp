@@ -65,9 +65,9 @@ DEFINE_string(write_frames, "",
 			 						 "Write frames with format prefix%06d.jpg");
 DEFINE_bool(fullscreen, false,
 						 "Run in fullscreen mode");
-DEFINE_string(caffemodel, "model/mpi/pose_iter_264000.caffemodel",
+DEFINE_string(caffemodel, "model/coco/pose_iter_440000.caffemodel",
 							"Caffe model.");
-DEFINE_string(caffeproto, "model/mpi/pose_deploy_linevec.prototxt",
+DEFINE_string(caffeproto, "model/coco/pose_deploy_linevec.prototxt",
 							"Caffe deploy prototxt.");
 
 DEFINE_string(resolution, "960x540",
@@ -162,6 +162,7 @@ struct GLOBAL {
 			is_fullscreen(0),
 			is_video_paused(0),
 			is_shift_down(0),
+			is_googly_eyes(0),
 			current_frame(0),
 			seek_to_frame(-1),
 			select_stage(-1),
@@ -169,6 +170,7 @@ struct GLOBAL {
 		bool is_fullscreen;
 		bool is_video_paused;
 		bool is_shift_down;
+		bool is_googly_eyes;
 		int current_frame;
 		int seek_to_frame;
 		int select_stage;
@@ -284,10 +286,10 @@ void warmup(int device_id){
 		LOG(INFO) << "Selecting MPI model.";
 	} else if (nc[device_id].nms_num_parts==18) {
 		nc[device_id].modeldesc = new COCOModelDescriptor();
-		global.nms_threshold = 0.1;
+		global.nms_threshold = 0.095;
 		global.connect_min_subset_cnt = 3;
-		global.connect_min_subset_score = 0.95;
-		global.connect_inter_threshold = 0.075;
+		global.connect_min_subset_score = 0.85;
+		global.connect_inter_threshold = 0.095;
 		global.connect_inter_min_above_threshold = 9;
 	} else {
 		CHECK(0) << "Unknown number of parts! Couldn't set model";
@@ -365,8 +367,11 @@ void render(int gid, float *heatmaps /*GPU*/) {
 									  //  heatmaps, boxsize, centers, poses, nc[gid].num_people, global.part_to_show);
 		if (global.part_to_show-1<=nc[gid].modeldesc->num_parts())
 		{
-			caffe::render_coco_parts(nc[gid].canvas, origin_width, origin_height, INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT,
-		 								 heatmaps, boxsize, centers, poses, nc[gid].num_people, global.part_to_show);
+			caffe::render_coco_parts(nc[gid].canvas,
+				origin_width, origin_height,
+				INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT,
+		 		heatmaps, boxsize, centers, poses,
+				nc[gid].num_people, global.part_to_show, global.uistate.is_googly_eyes);
 		} else {
 			int aff_part = ((global.part_to_show-1)-nc[gid].modeldesc->num_parts()-1)*2;
 			int num_parts_accum = 1;
@@ -430,7 +435,6 @@ void* getFrameFromCam(void *i){
 				}
 
 			// If we reach the end of a video, loop
-
 				if (frame_counter >= cap.get(CV_CAP_PROP_FRAME_COUNT)) {
 					LOG(INFO) << "Looping video after " << frame_counter-1 << " frames";
 			    cap.set(CV_CAP_PROP_POS_FRAMES, 0);
@@ -1564,7 +1568,6 @@ void* displayFrame(void *i) { //single thread
   double this_time;
   float FPS = 0;
 	char tmp_str[256];
-	//Mat resized_frame;
 	while(1) {
 		if (global.quit_threads) break;
 
@@ -1572,26 +1575,20 @@ void* displayFrame(void *i) { //single thread
 		double tic = get_wall_time();
 		Mat wrap_frame(origin_height, origin_width, CV_8UC3, f.data_for_wrap);
 
-		if (0&&FLAGS_write_frames.empty()) {
+		if (FLAGS_write_frames.empty()) {
 			snprintf(tmp_str, 256, "%4.1f fps", FPS);
 		} else {
 			snprintf(tmp_str, 256, "%4.1f ms", FLAGS_num_gpu*1000.0*1.0/FPS);
 		}
-		if (0) {
-		// cv::putText(wrap_frame, tmp_str, cv::Point(27,37),
-		// 	cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 2);
+		if (1) {
 		cv::putText(wrap_frame, tmp_str, cv::Point(25,35),
-			cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,255,255), 1);
+			cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0,0,0), 1);
 
 		snprintf(tmp_str, 256, "%4d", f.numPeople);
-		// cv::putText(wrap_frame, tmp_str, cv::Point(27,67),
-		// 	cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 1);
 		cv::putText(wrap_frame, tmp_str, cv::Point(origin_width-100+2, 35+2),
 			cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0,0,0), 2);
 		cv::putText(wrap_frame, tmp_str, cv::Point(origin_width-100, 35),
 			cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(150,150,255), 2);
-		//LOG(ERROR) << "processed";
-		//cv::resize(wrap_frame, resized_frame, Size(1920, 1080), 0, 0, CV_INTER_LINEAR);
 		}
 		if (global.part_to_show!=0) {
 			if (global.part_to_show-1<=model_descriptor->num_parts()) {
@@ -1972,6 +1969,11 @@ bool handleKey(int c) {
 		global.quit_threads = true;
 		return false;
 	}
+
+	if (c=='g') {
+		global.uistate.is_googly_eyes = !global.uistate.is_googly_eyes;
+	}
+
 	// Rudimentary seeking in video
 	if (c=='l' || c=='k' || c==' ') {
 		if (!FLAGS_video.empty()) {

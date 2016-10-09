@@ -402,7 +402,7 @@ void render_mpi_parts(float* canvas, int w_canvas, int h_canvas, int w_net, int 
 // COCO
 
 __global__ void render_pose_coco_parts(float* dst_pointer, int w_canvas, int h_canvas, float ratio_to_origin,
-                             float* poses, int boxsize, int num_people, float threshold){
+                             float* poses, int boxsize, int num_people, float threshold, bool googly_eyes){
    const int NUM_PARTS = 18;
 
   //poses has length 3 * 15 * num_people
@@ -600,9 +600,9 @@ __global__ void render_pose_coco_parts(float* dst_pointer, int w_canvas, int h_c
           co.y = color[(i%nColor)*3+1];
           co.z = color[(i%nColor)*3+2];
 
-          if (0 && (i==14 || i==15)) {
-            maxr2 = 0.66*0.66*2.5*2.5*radius*radius;
-            minr2 = 0.66*0.66*(2.5*radius-2)*(2.5*radius-2);
+          if (googly_eyes && (i==14 || i==15)) {
+            maxr2 = shared_scalef[p].x*shared_scalef[p].x*2.5*2.5*radius*radius;
+            minr2 = shared_scalef[p].x*shared_scalef[p].x*(2.5*radius-2)*(2.5*radius-2);
             alpha = 0.9;
             co.x = 0; co.y = 0; co.z = 0;
             if(dist2 <= maxr2){
@@ -791,14 +791,14 @@ __global__ void render_pose_coco_heatmap2(float* dst_pointer, int w_canvas, int 
       float y_on_box = h_inv * y + (0.5 * h_inv - 0.5);
 
       if(x_on_box >= 0 && x_on_box < w_net && y_on_box >=0 && y_on_box < h_net){
-        float value_this;
+        //float value_this;
         int x_nei[4];
         x_nei[1] = int(x_on_box + 1e-5);
         x_nei[1] = (x_nei[1] < 0) ? 0 : x_nei[1];
         x_nei[0] = (x_nei[1] - 1 < 0) ? x_nei[1] : (x_nei[1] - 1);
         x_nei[2] = (x_nei[1] + 1 >= w_net) ? (w_net - 1) : (x_nei[1] + 1);
         x_nei[3] = (x_nei[2] + 1 >= w_net) ? (w_net - 1) : (x_nei[2] + 1);
-        float dx = x_on_box - x_nei[1];
+        //float dx = x_on_box - x_nei[1];
 
         int y_nei[4];
         y_nei[1] = int(y_on_box + 1e-5);
@@ -806,9 +806,9 @@ __global__ void render_pose_coco_heatmap2(float* dst_pointer, int w_canvas, int 
         y_nei[0] = (y_nei[1] - 1 < 0) ? y_nei[1] : (y_nei[1] - 1);
         y_nei[2] = (y_nei[1] + 1 >= h_net) ? (h_net - 1) : (y_nei[1] + 1);
         y_nei[3] = (y_nei[2] + 1 >= h_net) ? (h_net - 1) : (y_nei[2] + 1);
-        float dy = y_on_box - y_nei[1];
+        //float dy = y_on_box - y_nei[1];
 
-        float temp[4];
+        //float temp[4];
         int offset_src = p * offset3 + part * offset2;
         value = heatmaps[offset_src + y_nei[1]*w_net + x_nei[1]];
         // if(part != 14){
@@ -898,7 +898,7 @@ __global__ void render_pose_coco_affinity(float* dst_pointer, int w_canvas, int 
           y_nei[3] = (y_nei[2] + 1 >= h_net) ? (h_net - 1) : (y_nei[2] + 1);
           float dy = y_on_box - y_nei[1];
 
-          float temp[4];
+          //float temp[4];
           int offset_src = p * offset3 + part * offset2;
           if (num_parts_accum==1) {
           // for(int i = 0; i < 4; i++){
@@ -985,7 +985,7 @@ __global__ void render_pose_coco_affinity(float* dst_pointer, int w_canvas, int 
 
 
 void render_coco_parts(float* canvas, int w_canvas, int h_canvas, int w_net, int h_net,
-                    float* heatmaps, int boxsize, float* centers, float* poses, vector<int> num_people, int part){
+                    float* heatmaps, int boxsize, float* centers, float* poses, vector<int> num_people, int part, bool googly_eyes){
   //canvas, image    in width * height * 3 * N
   //heatmaps         in w_net * h_net * 15 * (P1+P2+...+PN)
   //centers          in 2 * 11 * 1 * N
@@ -1017,7 +1017,7 @@ void render_coco_parts(float* canvas, int w_canvas, int h_canvas, int w_net, int
       if(num_people_this_frame != 0){
         render_pose_coco_parts<<<threadsPerBlock, numBlocks>>>(canvas, w_canvas, h_canvas, ratio_to_origin,
                                                           poses+offset_pose_so_far, boxsize,
-                                                          num_people_this_frame, threshold);
+                                                          num_people_this_frame, threshold, googly_eyes);
       }
     } else if (part > 0 && part<58) {
 
@@ -1060,10 +1060,10 @@ void render_coco_aff(float* canvas, int w_canvas, int h_canvas, int w_net, int h
   int offset_heatmap = w_net * h_net * NUM_PARTS; // boxsize * boxsize * 15
   //int offset_info = 33; //22
   int offset_pose = NUM_PARTS*3;
-  float threshold = 0.01;
+  //float threshold = 0.01;
   int offset_pose_so_far = 0;
   int offset_heatmap_so_far = 0;
-  float ratio_to_origin = (float)h_canvas / (float)h_net;
+  //float ratio_to_origin = (float)h_canvas / (float)h_net;
 
   dim3 threadsPerBlock(numThreadsPerBlock_1d, numThreadsPerBlock_1d);
   dim3 numBlocks(updiv(w_canvas, threadsPerBlock.x), updiv(h_canvas, threadsPerBlock.y));

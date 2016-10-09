@@ -3008,7 +3008,7 @@ layer {
   propagate_down: false
   nms_param {
     threshold: 0.05
-    max_peaks: 42
+    max_peaks: 64
     num_parts: 18
   }
 }

@@ -9,7 +9,7 @@
 #include "caffe/common.hpp"
 #include "caffe/util/device_alternate.hpp"
 #include "caffe/util/mkl_alternate.hpp"
-
+ 
 #define RENDER_MAX_PEOPLE 64
 
 namespace caffe {
@@ -19,7 +19,7 @@ void render_mpi_parts(float* canvas, int w_canvas, int h_canvas, int w_net, int 
                     float* centers, float* poses, vector<int> num_people, int part);
 void render_coco_parts(float* canvas, int w_canvas, int h_canvas, int w_net, int h_net,
                     float* heatmaps, int boxsize,
-                    float* centers, float* poses, vector<int> num_people, int part);
+                    float* centers, float* poses, vector<int> num_people, int part, bool googly_eyes=0);
 void render_coco_aff(float* canvas, int w_canvas, int h_canvas, int w_net, int h_net,
                     float* heatmaps, int boxsize, float* centers, float* poses,
                     vector<int> num_people, int part, int num_parts_accum);

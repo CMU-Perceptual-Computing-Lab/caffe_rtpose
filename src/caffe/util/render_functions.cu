@@ -719,9 +719,10 @@ __global__ void render_pose_coco_heatmap(float* dst_pointer, int w_canvas, int h
     } else {
       getColor(c, value, -1,1);
     }
-    b = 0.5 * b + 0.5 * c[0];
-    g = 0.5 * g + 0.5 * c[1];
-    r = 0.5 * r + 0.5 * c[2];
+    float alpha = 0.7;
+    b = (1-alpha) * b + alpha * c[2];
+    g = (1-alpha) * g + alpha * c[1];
+    r = (1-alpha) * r + alpha * c[0];
 
     dst_pointer[                          y * w_canvas + x] = b; //plot dot
     dst_pointer[    w_canvas * h_canvas + y * w_canvas + x] = g;
@@ -830,7 +831,7 @@ __global__ void render_pose_coco_heatmap2(float* dst_pointer, int w_canvas, int 
     // } else {
     //   getColor(c, value, -1,1);
     // }
-    float alpha = 0.6;
+    float alpha = 0.7;
     b = (1-alpha) * b + alpha * c[2];
     g = (1-alpha) * g + alpha * c[1];
     r = (1-alpha) * r + alpha * c[0];
@@ -970,7 +971,7 @@ __global__ void render_pose_coco_affinity(float* dst_pointer, int w_canvas, int 
     // c[0] /= count;
     // c[1] /= count;
     // c[2] /= count;
-    float alpha = 0.6;
+    float alpha = 0.7;
     b = (1-alpha) * b + alpha * c[2];
     g = (1-alpha) * g + alpha * c[1];
     r = (1-alpha) * r + alpha * c[0];

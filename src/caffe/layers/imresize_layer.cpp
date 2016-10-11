@@ -15,6 +15,8 @@ void ImResizeLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom, const 
 	ImResizeParameter imresize_param = this->layer_param_.imresize_param();
 	targetSpatialWidth = imresize_param.target_spatial_width(); //temporarily
 	targetSpatialHeight = imresize_param.target_spatial_height();
+	start_scale = imresize_param.start_scale();
+	scale_gap = imresize_param.scale_gap();	
 }
 
 template <typename Dtype>
@@ -29,8 +31,7 @@ void ImResizeLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom, const vec
 	vector<int> top_shape(bottom_shape);
 
 	ImResizeParameter imresize_param = this->layer_param_.imresize_param();
-	start_scale = imresize_param.start_scale();
-	scale_gap = imresize_param.scale_gap();
+
 	if(imresize_param.factor() != 0){
 		top_shape[3] = top_shape[3] * imresize_param.factor();
 		top_shape[2] = top_shape[2] * imresize_param.factor();

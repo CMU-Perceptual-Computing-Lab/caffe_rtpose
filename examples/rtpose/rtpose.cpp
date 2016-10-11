@@ -55,22 +55,29 @@ namespace db = caffe::db;
 using namespace std;
 using namespace cv;
 
+DEFINE_bool(fullscreen, false,
+						 "Run in fullscreen mode (press f during runtime to toggle)");
+DEFINE_int32(part_to_show, 0,
+						 "Part to show from the start.");
+DEFINE_string(write_frames, "",
+						 "Write frames with format prefix%06d.jpg");
+DEFINE_bool(no_frame_drops, false,
+						"Dont drop frames.");
+
 DEFINE_int32(camera, 0,
 						 "The camera index for VideoCapture.");
 DEFINE_string(video, "",
 						 "Use a video file instead of the camera.");
-DEFINE_bool(no_frame_drops, false,
-						"Dont drop frames");
-DEFINE_string(write_frames, "",
-			 						 "Write frames with format prefix%06d.jpg");
-DEFINE_bool(fullscreen, false,
-						 "Run in fullscreen mode");
+DEFINE_int32(start_frame, 0,
+						 "Skip to frame # of video");
+
+
 DEFINE_string(caffemodel, "model/coco/pose_iter_440000.caffemodel",
 							"Caffe model.");
 DEFINE_string(caffeproto, "model/coco/pose_deploy_linevec.prototxt",
 							"Caffe deploy prototxt.");
 
-DEFINE_string(resolution, "960x540",
+DEFINE_string(resolution, "1280x720",
 						 "The image resolution (display).");
 DEFINE_string(net_resolution, "656x368",
 						 "Multiples of 16.");
@@ -81,13 +88,20 @@ DEFINE_int32(start_device, 0,
 						 "GPU device start number.");
 DEFINE_int32(num_gpu, 1,
 						 "The number of GPU devices to use.");
-DEFINE_int32(part_to_show, 0,
-						 "Part to show from the start.");
+
+DEFINE_double(start_scale, 1,
+						 "Initial scale. Must match net_resolution");
+DEFINE_double(scale_gap, 0.3,
+						 "Scale gap between scales. No effect unless num_scales>1");
+DEFINE_int32(num_scales, 1,
+						 "Number of scales to average");
+
 // These are set to match FLAGS_resolution
 int origin_width=960; //960 //1280 //640
 int origin_height=540; //540 //720 //480
 
 // These are set to match FLAGS_camera_resolution
+// TODO: clean up the defines and duplicate vars and such
 int camera_frame_width=1920;
 int camera_frame_height=1080;
 int init_person_net_height = (368);
@@ -102,7 +116,7 @@ int init_person_net_width = (356);
 #define BUFFER_SIZE 4    //affects latency
 #define MAX_LENGTH_INPUT_QUEUE 500 //affects memory usage
 #define FPS_SRC 30
-#define batch_size 1
+#define batch_size FLAGS_num_scales
 
 #define MAX_NUM_PARTS 70
 // This is defined in render_functions.hpp
@@ -110,8 +124,9 @@ int init_person_net_width = (356);
 #define MAX_MAX_PEAKS 96
 
 
-float start_scale = 0.9;
-float scale_gap = 0.3;
+#define start_scale FLAGS_start_scale
+#define scale_gap FLAGS_scale_gap
+
 int NUM_GPU;  //4
 double INIT_TIME = -999;
 
@@ -263,7 +278,8 @@ void warmup(int device_id){
 	caffe::ImResizeLayer<float> *resize_layer =
 		(caffe::ImResizeLayer<float>*)nc[device_id].person_net->layer_by_name("resize").get();
 
-	start_scale = resize_layer->GetStartScale(); // TODO: Clean this up
+	resize_layer->SetStartScale(start_scale);
+	resize_layer->SetScaleGap(scale_gap);
 	LOG(INFO) << "start_scale = " << start_scale;
 
 	nc[device_id].nms_max_peaks = nms_layer->GetMaxPeaks();
@@ -286,10 +302,10 @@ void warmup(int device_id){
 		LOG(INFO) << "Selecting MPI model.";
 	} else if (nc[device_id].nms_num_parts==18) {
 		nc[device_id].modeldesc = new COCOModelDescriptor();
-		global.nms_threshold = 0.095;
+		global.nms_threshold = 0.055;
 		global.connect_min_subset_cnt = 3;
-		global.connect_min_subset_score = 0.85;
-		global.connect_inter_threshold = 0.095;
+		global.connect_min_subset_score = 0.40;
+		global.connect_inter_threshold = 0.055;
 		global.connect_inter_min_above_threshold = 9;
 	} else {
 		CHECK(0) << "Unknown number of parts! Couldn't set model";
@@ -376,7 +392,7 @@ void render(int gid, float *heatmaps /*GPU*/) {
 			int aff_part = ((global.part_to_show-1)-nc[gid].modeldesc->num_parts()-1)*2;
 			int num_parts_accum = 1;
 			if (aff_part==0) {
-				num_parts_accum = 18;
+				num_parts_accum = 19;
 			} else {
 				aff_part = aff_part-2;
 			}
@@ -398,10 +414,12 @@ void* getFrameFromCam(void *i){
 			cap.set(CV_CAP_PROP_FRAME_WIDTH,camera_frame_width);
 			cap.set(CV_CAP_PROP_FRAME_HEIGHT,camera_frame_height);
 		} else {
-			target_frame_rate = cap.get(CV_CAP_PROP_FPS);
 			CHECK(cap.open(FLAGS_video)) << "Couldn't open video file " << FLAGS_video;
+			target_frame_rate = cap.get(CV_CAP_PROP_FPS);
 			target_frame_time = 1.0/target_frame_rate;
-			//cap.set(CV_CAP_PROP_POS_FRAMES, 10000);
+			if (FLAGS_start_frame) {
+				cap.set(CV_CAP_PROP_POS_FRAMES, FLAGS_start_frame);
+			}
 			// global.uistate.is_video_paused = true;
 		}
 
@@ -413,6 +431,7 @@ void* getFrameFromCam(void *i){
     while(1) {
 			if (global.quit_threads) break;
 			if (!FLAGS_video.empty() && FLAGS_no_frame_drops) {
+				// If the queue is too long, wait for a bit
 				if (global.input_queue.size()>10) {
 					usleep(10*1000.0);
 					continue;
@@ -438,9 +457,11 @@ void* getFrameFromCam(void *i){
 				if (frame_counter >= cap.get(CV_CAP_PROP_FRAME_COUNT)) {
 					LOG(INFO) << "Looping video after " << frame_counter-1 << " frames";
 			    cap.set(CV_CAP_PROP_POS_FRAMES, 0);
+					// Wait until the queues are clear before exiting
 					if (!FLAGS_write_frames.empty()) {
 						while (global.input_queue.size() || global.output_queue_ordered.size()) {
-							usleep(10*1000.0);
+							// Should actually wait until they finish writing to disk
+							usleep(250*1000.0);
 							continue;
 						}
 						global.quit_threads = true;
@@ -451,7 +472,9 @@ void* getFrameFromCam(void *i){
 				// Sleep to get the right frame rate.
 				double cur_frame_time = get_wall_time();
 				double interval = (cur_frame_time-last_frame_time);
-
+				VLOG(3) << "cur_frame_time " << (cur_frame_time);
+				VLOG(3) << "last_frame_time " << (last_frame_time);
+				VLOG(3) << "cur-last_frame_time " << (cur_frame_time - last_frame_time);
 				VLOG(3) << "Video target frametime " << 1.0/target_frame_time
 								<< " read frametime " << 1.0/interval;
 				if (interval<target_frame_time) {
@@ -1578,11 +1601,11 @@ void* displayFrame(void *i) { //single thread
 		if (FLAGS_write_frames.empty()) {
 			snprintf(tmp_str, 256, "%4.1f fps", FPS);
 		} else {
-			snprintf(tmp_str, 256, "%4.1f ms", FLAGS_num_gpu*1000.0*1.0/FPS);
+			snprintf(tmp_str, 256, "%4.2f s/gpu", FLAGS_num_gpu*1.0/FPS);
 		}
 		if (1) {
 		cv::putText(wrap_frame, tmp_str, cv::Point(25,35),
-			cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0,0,0), 1);
+			cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,150,150), 1);
 
 		snprintf(tmp_str, 256, "%4d", f.numPeople);
 		cv::putText(wrap_frame, tmp_str, cv::Point(origin_width-100+2, 35+2),
@@ -1616,17 +1639,17 @@ void* displayFrame(void *i) { //single thread
 				cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,255,255), 1);
 		}
 
-		double a = get_wall_time();
 		imshow("video", wrap_frame);
 		if (!FLAGS_write_frames.empty()) {
+			double a = get_wall_time();
 			vector<int> compression_params;
 			compression_params.push_back(CV_IMWRITE_JPEG_QUALITY);
 			compression_params.push_back(98);
 			char fname[256];
 			sprintf(fname, "%s%06d.jpg", FLAGS_write_frames.c_str(), f.video_frame_number);
 			cv::imwrite(fname, wrap_frame, compression_params);
+			last_time += get_wall_time()-a;
 		}
-		last_time += get_wall_time()-a;
 
 		counter++;
 

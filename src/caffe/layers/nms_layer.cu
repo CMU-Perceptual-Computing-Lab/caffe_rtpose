@@ -70,9 +70,38 @@ __global__ void writeResultKernel(int length, int* input, Dtype* src_pointer, Dt
 
                 if(peak_index < max_peaks){ //limitation
 	                //output[input[globalIdx]] = globalIdx;
+
+								if (1) {
+									float x_acc = 0;
+									float y_acc = 0;
+									float score_acc = 0;
+									int count = 0;
+									for (int dy=-3;dy<4;dy++) {
+										if ((peak_loc_y+dy)>0 && (peak_loc_y+dy)<width) {
+											for (int dx=-3;dx<4;dx++) {
+												if ((peak_loc_x+dx)>0 && (peak_loc_x+dx)<width) {
+														float score = src_pointer[(peak_loc_y+dy)*width + peak_loc_x+dx];
+														float x = peak_loc_x+dx;
+														float y = peak_loc_y+dy;
+														if (score>0) {
+															x_acc += x*score;
+															y_acc += y*score;
+															score_acc += score;
+															count += 1;
+														}
+												}
+											}
+										}
+									}
+
+									output[(peak_index + 1) * 3] = x_acc/score_acc;
+	                output[(peak_index + 1) * 3 + 1] = y_acc/score_acc;
+	                output[(peak_index + 1) * 3 + 2] = src_pointer[peak_loc_y*width + peak_loc_x];
+								} else {
 	                output[(peak_index + 1) * 3] = peak_loc_x;
 	                output[(peak_index + 1) * 3 + 1] = peak_loc_y;
 	                output[(peak_index + 1) * 3 + 2] = src_pointer[peak_loc_y*width + peak_loc_x];
+								}
 	            }
             }
         }

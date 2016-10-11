@@ -23,6 +23,7 @@ class ImResizeLayer : public Layer<Dtype> {
   void setTargetDimenions(int nw, int nh);
 
   void SetStartScale(float astart_scale) { start_scale = astart_scale; }
+  void SetScaleGap(float ascale_gap) { scale_gap = ascale_gap; }
   float GetStartScale() { return start_scale; }
   float GetScaleGap() { return scale_gap; }
 

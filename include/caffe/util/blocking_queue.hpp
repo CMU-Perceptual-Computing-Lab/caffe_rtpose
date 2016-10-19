@@ -31,6 +31,7 @@ struct Frame {
   int padded_height; //should be 8x for net
 
   float* net_output; // raw heatmap in size padded_width/8 * padded_height/8
+  caffe::shared_ptr<float[]> joints;
 };
 
 

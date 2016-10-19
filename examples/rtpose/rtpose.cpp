@@ -14,7 +14,7 @@
 
 #include <gflags/gflags.h>
 
-#include "boost/algorithm/string.hpp"
+#include <boost/algorithm/string.hpp>
 #include "google/protobuf/text_format.h"
 #include <boost/thread/thread.hpp>
 
@@ -63,6 +63,9 @@ DEFINE_string(write_frames, "",
 						 "Write frames with format prefix%06d.jpg");
 DEFINE_bool(no_frame_drops, false,
 						"Dont drop frames.");
+DEFINE_string(write_json, "",
+						 "Write joint data with json format as prefix%06d.json");
+
 
 DEFINE_int32(camera, 0,
 						 "The camera index for VideoCapture.");
@@ -492,9 +495,11 @@ void* getFrameFromCam(void *i){
 				frame_counter++;
 			}
 
-
-		resize(image_uchar, image_uchar, Size(origin_width, origin_height), 0, 0, CV_INTER_AREA);
-
+		if (image_uchar.cols>origin_width) {
+			resize(image_uchar, image_uchar, Size(origin_width, origin_height), 0, 0, CV_INTER_AREA);
+		} else {
+			resize(image_uchar, image_uchar, Size(origin_width, origin_height), 0, 0, CV_INTER_CUBIC);
+		}
   		//char imgname[50];
 		//sprintf(imgname, "../dome/%03d.jpg", global_counter);
 		//sprintf(imgname, "../frame/frame%04d.png", global_counter);
@@ -1332,6 +1337,7 @@ void* processFrame(void *i){
 		int cnt = 0;
 		// CHECK_EQ(nc[tid].nms_num_parts, 15);
 		double tic = get_wall_time();
+		const int num_parts = nc[tid].nms_num_parts;
 		if (nc[tid].nms_num_parts==15) {
 			cnt = connectLimbs(subset, connection,
 												 heatmap_pointer, peaks,
@@ -1343,65 +1349,6 @@ void* processFrame(void *i){
 		}
 
 		VLOG(2) << "CNT: " << cnt << " Connect time " << (get_wall_time()-tic)*1000.0 << " ms.";
-
-		/* debug ---------------------------------------*/
-		// //vector<int> bottom_shape = nc[tid].person_net->blobs()[nc[tid].nblob_person-3]->shape();
-		// //cout << bottom_shape[0] << " " << bottom_shape[1] << " " << bottom_shape[2] << " " << bottom_shape[3] << " " << endl;
-
-		// //float* heatmap_ptr = nc[tid].person_net->blobs()[nc[tid].nblob_person-3]->mutable_cpu_data();
-		// //Mat heatmap(INIT_PERSON_NET_HEIGHT/8, INIT_PERSON_NET_WIDTH/8, CV_8UC1);
-		// // for(int c = 0; c < 60; c++){
-		// // 	float* jointsmap = heatmap_ptr + c * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH / 64;
-		// // 	if(c==14)
-		// // 		float* jointsmap = heatmap_ptr + 28 * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH / 64;
-
-		// // 	for (int y = 0; y < INIT_PERSON_NET_HEIGHT/8; y++){
-		// // 		for (int x = 0; x < INIT_PERSON_NET_WIDTH/8; x++){
-		// // 			float num = jointsmap[ y * INIT_PERSON_NET_WIDTH/8 + x]; //0 ~ 1;
-		// // 			num = (num > 1 ? 1 : (num < 0 ? 0 : num)); //prevent overflow for uchar
-		// // 			heatmap.data[(y * INIT_PERSON_NET_WIDTH/8 + x)] = (unsigned char)(num * 255);
-		// // 		}
-		// // 	}
-
-		// Mat heatmap(INIT_PERSON_NET_HEIGHT, INIT_PERSON_NET_WIDTH, CV_8UC1);
-		// char filename [100];
-		// for(int c = 0; c < 15; c++){  //30
-		// 	float* jointsmap = heatmap_pointer + c * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
-		// 	if(c==14)
-		// 		float* jointsmap = heatmap_pointer + 28 * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
-
-		//     sprintf(filename, "map%02d.txt", c);
-		//     ofstream fout(filename);
-
-		// 	for (int y = 0; y < INIT_PERSON_NET_HEIGHT; y++){
-		// 		for (int x = 0; x < INIT_PERSON_NET_WIDTH; x++){
-		// 			float num = jointsmap[ y * INIT_PERSON_NET_WIDTH + x]; //0 ~ 1;
-		// 			fout << num << "\t";
-		// 			num = (num > 1 ? 1 : (num < 0 ? 0 : num)); //prevent overflow for uchar
-		// 			heatmap.data[(y * INIT_PERSON_NET_WIDTH + x)] = (unsigned char)(num * 255);
-		// 		}
-		// 		fout<<endl;
-		// 	}
-		// 	fout.close();
-
-		// 	for(int i = 0; i < 33; i++){
-		// 		cout << peaks[c*33+i] << " ";
-		// 	}
-		// 	cout << endl;
-
-		// 	for(int i = 0; i < peaks[c*33]; i++){
-		// 		circle(heatmap, Point2f(peaks[c*33+3*(i+1)], peaks[c*33+3*(i+1)+1]), 2, Scalar(0,0,0), -1);
-		// 		//cout << jointsmap[ int(peaks[c*33+3*(i+1)+1] * INIT_PERSON_NET_WIDTH + peaks[c*33+3*(i+1)]) ] << " ";
-		// 	}
-
-		// 	//cout << "here!" << endl;
-		// 	//imshow("person_map", heatmap);
-		// 	//waitKey();
-		// 	char imgname[50];
-		// 	sprintf(imgname, "map%02d.jpg", c);
-		// 	cv::imwrite(imgname, heatmap);
-		// }
-
 		nc[tid].num_people[0] = cnt;
 		VLOG(2) << "num_people[i] = " << cnt;
 
@@ -1410,16 +1357,6 @@ void* processFrame(void *i){
 			MAX_NUM_PARTS*3*MAX_PEOPLE * sizeof(float),
 			cudaMemcpyHostToDevice);
 
-		// debug, wrong!
-		// float *h_out = (float *) malloc(450 * sizeof(float) );
-		// cudaMemcpy(h_out, nc[tid].joints, 450 * sizeof(float) , cudaMemcpyDeviceToHost);
-		// for(int i = 0; i < cnt; i++){
-		//     for(int j = 0; j < 15; j++){
-		// 	    cout << h_out[i*45 + j*3] << " " << h_out[cnt*45 + j*3 +1] << " " << h_out[cnt*45 + j*3 +2] << endl;
-		// 	}
-		//     cout << endl;
-		// }
-
 		if(subset.size() != 0){
 			// timer.Start();
 			//LOG(ERROR) << "Rendering";
@@ -1427,6 +1364,12 @@ void* processFrame(void *i){
 			for(int n = 0; n < valid_data; n++){
 				frame_batch[n].numPeople = nc[tid].num_people[n];
 				frame_batch[n].gpu_computed_time = get_wall_time();
+				frame_batch[n].joints = boost::shared_ptr<float[]>(new float[frame_batch[n].numPeople*MAX_NUM_PARTS*3]);
+				for (int ij=0;ij<frame_batch[n].numPeople*num_parts*3;ij++) {
+					frame_batch[n].joints[ij] = joints[ij];
+				}
+
+
 				cudaMemcpy(frame_batch[n].data_for_mat, nc[tid].canvas, origin_height * origin_width * 3 * sizeof(float), cudaMemcpyDeviceToHost);
 				global.output_queue.push(frame_batch[n]);
 
@@ -1648,8 +1591,37 @@ void* displayFrame(void *i) { //single thread
 			char fname[256];
 			sprintf(fname, "%s%06d.jpg", FLAGS_write_frames.c_str(), f.video_frame_number);
 			cv::imwrite(fname, wrap_frame, compression_params);
-			last_time += get_wall_time()-a;
+			// last_time += get_wall_time()-a;
 		}
+
+		if (!FLAGS_write_json.empty()) {
+			const int num_parts = model_descriptor->num_parts();
+			double a = get_wall_time();
+			char fname[256];
+			sprintf(fname, "%s%06d.json", FLAGS_write_json.c_str(), f.video_frame_number);
+			std::ofstream fs(fname);
+			fs << "{\n";
+			fs << "\"version\":0.1,\n";
+			fs << "\"bodies\":[\n";
+			for (int ip=0;ip<f.numPeople;ip++) {
+				fs << "{\n" << "\"joints\":" << "[";
+				for (int ij=0;ij<num_parts;ij++) {
+					fs << f.joints[ip*num_parts*3 + ij*3+0] << ",";
+					fs << f.joints[ip*num_parts*3 + ij*3+1] << ",";
+					fs << f.joints[ip*num_parts*3 + ij*3+2];
+					if (ij<num_parts-1) fs << ",";
+				}
+				fs << "]\n";
+				fs << "}";
+				if (ip<f.numPeople-1) {
+					fs<<",\n";
+				}
+			}
+			fs << "]\n";
+			fs << "}\n";
+			// last_time += get_wall_time()-a;
+		}
+
 
 		counter++;
 

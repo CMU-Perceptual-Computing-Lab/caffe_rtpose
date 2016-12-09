@@ -17,6 +17,8 @@
 #include <boost/algorithm/string.hpp>
 #include "google/protobuf/text_format.h"
 #include <boost/thread/thread.hpp>
+#include "boost/algorithm/string.hpp"
+#include "boost/filesystem.hpp"
 
 #include <iostream>
 #include "caffe/blob.hpp"
@@ -71,6 +73,8 @@ DEFINE_int32(camera, 0,
 						 "The camera index for VideoCapture.");
 DEFINE_string(video, "",
 						 "Use a video file instead of the camera.");
+DEFINE_string(image_dir, "",
+						 "Process a directory of images.");
 DEFINE_int32(start_frame, 0,
 						 "Skip to frame # of video");
 
@@ -164,6 +168,7 @@ struct GLOBAL {
 	caffe::BlockingQueue<Frame> output_queue_ordered;
 	caffe::BlockingQueue<Frame> output_queue_mated;
 	std::priority_queue<int, std::vector<int>, std::greater<int> > dropped_index;
+	std::vector< std::string > image_list;
 	std::mutex mtx;
 	int part_to_show;
 	float target_size[1][2];
@@ -305,10 +310,10 @@ void warmup(int device_id){
 		LOG(INFO) << "Selecting MPI model.";
 	} else if (nc[device_id].nms_num_parts==18) {
 		nc[device_id].modeldesc = new COCOModelDescriptor();
-		global.nms_threshold = 0.055;
+		global.nms_threshold = 0.05;
 		global.connect_min_subset_cnt = 3;
-		global.connect_min_subset_score = 0.40;
-		global.connect_inter_threshold = 0.055;
+		global.connect_min_subset_score = 0.4;
+		global.connect_inter_threshold = 0.050;
 		global.connect_inter_min_above_threshold = 9;
 	} else {
 		CHECK(0) << "Unknown number of parts! Couldn't set model";
@@ -332,7 +337,8 @@ void process_and_pad_image(float* target, Mat oriImg, int tw, int th, bool norma
 	int padw = (tw-ow)/2;
 	int padh = (th-oh)/2;
 	//LOG(ERROR) << " padw " << padw << " padh " << padh;
-
+	CHECK_GE(padw,0) << "Image too big for target size.";
+	CHECK_GE(padh,0) << "Image too big for target size.";
 	//parallel here
 	unsigned char* pointer = (unsigned char*)(oriImg.data);
 
@@ -406,12 +412,180 @@ void render(int gid, float *heatmaps /*GPU*/) {
 	}
 	VLOG(2) << "Render time " << (get_wall_time()-tic)*1000.0 << " ms.";
 }
+void* getFrameFromDir(void *i) {
+std::string folderName = FLAGS_image_dir;
+if ( !boost::filesystem::exists( folderName ) ) return 0;
+  boost::filesystem::directory_iterator end_itr; // default construction yields past-the-end
+  for ( boost::filesystem::directory_iterator itr( folderName );
+        itr != end_itr;
+        ++itr )
+  {
+    if ( boost::filesystem::is_directory(itr->status()) ) {
+			// Skip directories
+		} else if (itr->path().extension()==".jpg" || itr->path().extension()==".png" || itr->path().extension()==".bmp") {
+			//	std::string filename = itr->path().string();
+			global.image_list.push_back( itr->path().string() );
+		}
+  }
+  std::sort(global.image_list.begin(), global.image_list.end());
 
+	    int global_counter = 1;
+			int frame_counter = 0;
+			Mat image_uchar, image_uchar_orig;
+			Mat image_uchar_prev;
+			double last_frame_time = -1;
+	    while(1) {
+				if (global.quit_threads) break;
+				// If the queue is too long, wait for a bit
+				if (global.input_queue.size()>10) {
+					usleep(10*1000.0);
+					continue;
+				}
+
+
+				// Keep a count of how many frames we've seen in the video
+				frame_counter++;
+
+				// This should probably be protected.
+				global.uistate.current_frame = frame_counter-1;
+
+				// If we reach the end of a video, loop
+				if (frame_counter >= global.image_list.size()) {
+					LOG(INFO) << "Done, exiting. # frames: " << frame_counter;
+					// Wait until the queues are clear before exiting
+						while (global.input_queue.size() || global.output_queue_ordered.size()) {
+							// Should actually wait until they finish writing to disk
+							usleep(500*1000.0);
+							continue;
+						}
+						global.quit_threads = true;
+						global.uistate.is_video_paused = true;
+				}
+
+			std::string filename = global.image_list[global.uistate.current_frame];
+			image_uchar_orig = cv::imread(filename.c_str(), CV_LOAD_IMAGE_COLOR);
+			double scale = 0;
+			if (image_uchar_orig.cols/(double)image_uchar_orig.rows>origin_width/(double)origin_height) {
+				scale = origin_width/(double)image_uchar_orig.cols;
+			} else {
+				scale = origin_height/(double)image_uchar_orig.rows;
+			}
+			scale = 1.25*scale;
+			Mat M = Mat::eye(2,3,CV_64F);
+			M.at<double>(0,0) = 1.0/scale;
+			M.at<double>(1,1) = 1.0/scale;
+			warpAffine(image_uchar_orig, image_uchar, M,
+								 Size(origin_width, origin_height),
+								 CV_INTER_CUBIC,
+								 cv::BORDER_CONSTANT, cv::Scalar(0,0,0));
+			// resize(image_uchar, image_uchar, Size(new_width, new_height), 0, 0, CV_INTER_CUBIC);
+			image_uchar_prev = image_uchar;
+
+			// if (image_uchar.cols>origin_width) {
+			// 	resize(image_uchar, image_uchar, Size(origin_width, origin_height), 0, 0, CV_INTER_AREA);
+			// } else {
+			// 	resize(image_uchar, image_uchar, Size(origin_width, origin_height), 0, 0, CV_INTER_CUBIC);
+			// }
+	  		//char imgname[50];
+			//sprintf(imgname, "../dome/%03d.jpg", global_counter);
+			//sprintf(imgname, "../frame/frame%04d.png", global_counter);
+			//image_uchar = imread(imgname, 1);
+			//sprintf(imgname, "../Ian/hd%08d_00_00.png", global_counter*2 + 3500); //2700
+
+			// sprintf(imgname, "../domeHD/hd%08d_00_07.png", global_counter + 2700); //2700
+			// image_uchar = imread(imgname, 1);
+			// resize(image_uchar, image_uchar, Size(960, 540), 0, 0, CV_INTER_AREA);
+			// //LOG(ERROR) << "global_counter " << global_counter;
+
+			// if(global_counter>=600){  //449 //250
+			// 	imshow("here",image_uchar);
+			// 	waitKey();
+			// }
+
+			//waitKey(10); //120 //400
+			if( image_uchar.empty() ) continue;
+
+			Frame f;
+			f.ori_width = image_uchar_orig.cols;
+			f.ori_height = image_uchar_orig.rows;
+			f.index = global_counter++;
+			f.video_frame_number = global.uistate.current_frame;
+			f.data_for_wrap = new unsigned char [origin_height * origin_width * 3]; //fill after process
+			f.data_for_mat = new float [origin_height * origin_width * 3];
+			process_and_pad_image(f.data_for_mat, image_uchar, origin_width, origin_height, 0);
+
+			//resize
+			// int target_rows = fixed_scale_height; //some fixed number that is multiplier of 8
+			// int target_cols = float(fixed_scale_height) / image_uchar.rows * image_uchar.cols;
+
+			// if(target_cols % 8 != 0) {
+			// 	target_cols = 8 * (target_cols / 8 + 1);
+			// }
+
+
+			// if(INIT_PERSON_NET_WIDTH != target_cols || INIT_PERSON_NET_HEIGHT != target_rows){
+			// 	LOG(ERROR) << "Size not match: " << INIT_PERSON_NET_WIDTH << "  " << target_cols;
+			// 	continue;
+			// }
+
+			f.scale = scale;
+			//pad and transform to float
+			int offset = 3 * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
+			f.data = new float [batch_size * offset];
+			int target_width, target_height;
+			Mat image_temp;
+			//LOG(ERROR) << "f.index: " << f.index;
+			for(int i=0; i < batch_size; i++){
+				float scale = start_scale - i*scale_gap;
+				target_width = 16 * ceil(INIT_PERSON_NET_WIDTH * scale /16);
+				target_height = 16 * ceil(INIT_PERSON_NET_HEIGHT * scale /16);
+				//LOG(ERROR) << "target_size[0][0]: " << target_width << " target_size[0][1] " << target_height;
+
+				// int padw, padh;
+				// padw = (INIT_PERSON_NET_WIDTH - target_width)/2;
+				// padh = (INIT_PERSON_NET_HEIGHT - target_height)/2;
+				// LOG(ERROR) << "padw " << padw << " padh " << padh;
+				CHECK_LE(target_width, INIT_PERSON_NET_WIDTH);
+				CHECK_LE(target_height, INIT_PERSON_NET_HEIGHT);
+
+				resize(image_uchar, image_temp, Size(target_width, target_height), 0, 0, CV_INTER_AREA);
+				process_and_pad_image(f.data + i * offset, image_temp, INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT, 1);
+			}
+			f.commit_time = get_wall_time();
+			f.preprocessed_time = get_wall_time();
+
+			// check the first channel
+			// int tw = INIT_PERSON_NET_WIDTH;
+			// int th = INIT_PERSON_NET_HEIGHT;
+			// for(int i=0; i < batch_size; i++){
+			// 	Mat test(th, tw, CV_8UC1);
+			// 	for(int y = 0; y < th; y++){
+			// 		for(int x = 0; x < tw; x++){
+			// 			test.data[y * tw + x] = (unsigned int)((f.data[i * tw *th *3 + y * tw + x] + 0.5) * 256);
+			// 		}
+			// 	}
+			// 	char imgname[50];
+			// 	sprintf(imgname, "validate%02d.jpg", i);
+			// 	cv::imwrite(imgname, test);
+			// }
+
+			global.input_queue.push(f);
+			//LOG(ERROR) << "Frame " << f.index << " committed with init_time " << fixed << f.commit_time;
+			//LOG(ERROR) << "pushing frame " << index << " to input_queue, now size " << global.input_queue.size();
+			//printGlobal("prepareFrame    ");
+			//if(counter == 3) break;
+	    }
+	    return nullptr;
+}
 
 void* getFrameFromCam(void *i){
 		VideoCapture cap;
 		double target_frame_time = 0;
 		double target_frame_rate = 0;
+		if (!FLAGS_image_dir.empty()) {
+			return getFrameFromDir(i);
+		}
+
 		if (FLAGS_video.empty()) {
 			CHECK(cap.open(FLAGS_camera)) << "Couldn't open camera " << FLAGS_camera;
 			cap.set(CV_CAP_PROP_FRAME_WIDTH,camera_frame_width);
@@ -425,6 +599,7 @@ void* getFrameFromCam(void *i){
 			}
 			// global.uistate.is_video_paused = true;
 		}
+
 
     int global_counter = 1;
 		int frame_counter = 0;
@@ -464,7 +639,7 @@ void* getFrameFromCam(void *i){
 					if (!FLAGS_write_frames.empty()) {
 						while (global.input_queue.size() || global.output_queue_ordered.size()) {
 							// Should actually wait until they finish writing to disk
-							usleep(250*1000.0);
+							usleep(500*1000.0);
 							continue;
 						}
 						global.quit_threads = true;
@@ -1047,6 +1222,16 @@ int connectLimbsCOCO(
 					for(int lm=0; lm < num_inter; lm++){
 						int my = round(s_y + lm*d_y/num_inter);
 						int mx = round(s_x + lm*d_x/num_inter);
+						if (mx>=INIT_PERSON_NET_WIDTH) {
+							//LOG(ERROR) << "mx " << mx << "out of range";
+							mx = INIT_PERSON_NET_WIDTH-1;
+						}
+						if (my>=INIT_PERSON_NET_HEIGHT) {
+							//LOG(ERROR) << "my " << my << "out of range";
+							my = INIT_PERSON_NET_HEIGHT-1;
+						}
+						CHECK_GE(mx,0);
+						CHECK_GE(my,0);
 						int idx = my * INIT_PERSON_NET_WIDTH + mx;
 						float score = (vec_x*map_x[idx] + vec_y*map_y[idx]);
 						if(score > global.connect_inter_threshold){
@@ -1584,21 +1769,39 @@ void* displayFrame(void *i) { //single thread
 
 		imshow("video", wrap_frame);
 		if (!FLAGS_write_frames.empty()) {
-			double a = get_wall_time();
+			//double a = get_wall_time();
 			vector<int> compression_params;
 			compression_params.push_back(CV_IMWRITE_JPEG_QUALITY);
 			compression_params.push_back(98);
 			char fname[256];
-			sprintf(fname, "%s%06d.jpg", FLAGS_write_frames.c_str(), f.video_frame_number);
+			if (!FLAGS_image_dir.empty()) {
+				sprintf(fname, "%s%06d.jpg", FLAGS_write_frames.c_str(), f.video_frame_number);
+			} else {
+				boost::filesystem::path p(global.image_list[f.video_frame_number]);
+				string rawname = p.stem().string();
+				sprintf(fname, "%s/%s_lm.jpg", FLAGS_write_frames.c_str(), rawname.c_str());
+			}
+
 			cv::imwrite(fname, wrap_frame, compression_params);
 			// last_time += get_wall_time()-a;
 		}
 
 		if (!FLAGS_write_json.empty()) {
+			double scale = 1.0;
+			if (!FLAGS_image_dir.empty()) {
+				scale = 1.0/f.scale;
+			}
 			const int num_parts = model_descriptor->num_parts();
 			double a = get_wall_time();
 			char fname[256];
-			sprintf(fname, "%s%06d.json", FLAGS_write_json.c_str(), f.video_frame_number);
+			if (!FLAGS_image_dir.empty()) {
+				sprintf(fname, "%s%06d_lm.json", FLAGS_write_json.c_str(), f.video_frame_number);
+			} else {
+				boost::filesystem::path p(global.image_list[f.video_frame_number]);
+				string rawname = p.stem().string();
+
+				sprintf(fname, "%s/%s.json", FLAGS_write_json.c_str(), rawname.c_str());
+			}
 			std::ofstream fs(fname);
 			fs << "{\n";
 			fs << "\"version\":0.1,\n";
@@ -1606,8 +1809,8 @@ void* displayFrame(void *i) { //single thread
 			for (int ip=0;ip<f.numPeople;ip++) {
 				fs << "{\n" << "\"joints\":" << "[";
 				for (int ij=0;ij<num_parts;ij++) {
-					fs << f.joints[ip*num_parts*3 + ij*3+0] << ",";
-					fs << f.joints[ip*num_parts*3 + ij*3+1] << ",";
+					fs << scale*f.joints[ip*num_parts*3 + ij*3+0] << ",";
+					fs << scale*f.joints[ip*num_parts*3 + ij*3+1] << ",";
 					fs << f.joints[ip*num_parts*3 + ij*3+2];
 					if (ij<num_parts-1) fs << ",";
 				}

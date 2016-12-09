@@ -9,8 +9,8 @@
 #include "caffe/common.hpp"
 #include "caffe/util/device_alternate.hpp"
 #include "caffe/util/mkl_alternate.hpp"
- 
-#define RENDER_MAX_PEOPLE 64
+
+#define RENDER_MAX_PEOPLE 96
 
 namespace caffe {
 

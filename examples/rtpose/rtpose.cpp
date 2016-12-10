@@ -1774,7 +1774,7 @@ void* displayFrame(void *i) { //single thread
 			compression_params.push_back(CV_IMWRITE_JPEG_QUALITY);
 			compression_params.push_back(98);
 			char fname[256];
-			if (!FLAGS_image_dir.empty()) {
+			if (FLAGS_image_dir.empty()) {
 				sprintf(fname, "%s%06d.jpg", FLAGS_write_frames.c_str(), f.video_frame_number);
 			} else {
 				boost::filesystem::path p(global.image_list[f.video_frame_number]);
@@ -1794,7 +1794,7 @@ void* displayFrame(void *i) { //single thread
 			const int num_parts = model_descriptor->num_parts();
 			double a = get_wall_time();
 			char fname[256];
-			if (!FLAGS_image_dir.empty()) {
+			if (FLAGS_image_dir.empty()) {
 				sprintf(fname, "%s%06d_lm.json", FLAGS_write_json.c_str(), f.video_frame_number);
 			} else {
 				boost::filesystem::path p(global.image_list[f.video_frame_number]);

@@ -1789,7 +1789,7 @@ void* displayFrame(void *i) { //single thread
 		if (!FLAGS_write_json.empty()) {
 			double scale = 1.0;
 			if (!FLAGS_image_dir.empty()) {
-				scale = 1.0/f.scale;
+				scale = f.scale;
 			}
 			const int num_parts = model_descriptor->num_parts();
 			double a = get_wall_time();

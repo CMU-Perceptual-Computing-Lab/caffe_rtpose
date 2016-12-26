@@ -22,13 +22,13 @@ cd caffe_demo; make all
 ## Important options:
 `--video input.mp4` <--- Input video. If omitted, will use webcam.
 
-`--image_dir path_to_images/` <--- Run on all jpg, png, or bmp images in `path_to_images/`. If omitted, will use webcam.
+`--camera #` <--- Choose webcam number (default: 0).
 
-`--camera #` <--- Choose webcam number (if more than one webcam is connected, e.g., 1).
+`--image_dir path_to_images/` <--- Run on all jpg, png, or bmp images in `path_to_images/`. If omitted, will use webcam.
 
 `--write_frames path/`  <--- Render images with this prefix: path/frame%06d.jpg
 
-`--write_json path/`  <--- Output json file with joints with this prefix: path/frame%06d.json
+`--write_json path/`  <--- Output JSON file with joints with this prefix: path/frame%06d.json
 
 `--no_frame_drops` <--- Don't drop frames. Important for making offline results.
 
@@ -46,14 +46,15 @@ cd caffe_demo; make all
 
 `--logtostderr` <--- Log messages to standard error.
 
-## Examples:
-Run on a video `vid.mp4`, render image frames as `output/frame%06d.jpg` and output json files as `output/frame%06d.json`, using 3 scales (1.00, 0.85, and 0.70), parallelized over 2 GPUs.
+## Example:
+Run on a video `vid.mp4`, render image frames as `output/frame%06d.jpg` and output JSON files as `output/frame%06d.json`, using 3 scales (1.00, 0.85, and 0.70), parallelized over 2 GPUs:
 ```
 ./build/examples/rtpose/rtpose.bin --video vid.mp4 --num_gpu 2 --no_frame_drops --write_frames output/ --write_json output/ --num_scales 3 --scale_gap 0.15
 ```
 
 ## Output format:
 Each JSON file has a `bodies` array of objects, where each object has an array `joints` containing the joint locations and detection confidence formatted as `x1,y1,c1,x2,y2,c2,...`, where `c` is the confidence in [0,1].
+
 ```{
 "version":0.1,
 "bodies":[
@@ -62,8 +63,8 @@ Each JSON file has a `bodies` array of objects, where each object has an array `
 ]
 }
 ```
-
-## COCO parts: (see examples/rtpose/modeldesc.h )
+where the joint order of the COCO parts is: (see examples/rtpose/modeldesc.h )
+```
 	part2name {
 		{0,  "Nose"},
 		{1,  "Neck"},
@@ -85,3 +86,4 @@ Each JSON file has a `bodies` array of objects, where each object has an array `
 		{17, "LEar"},
 		{18, "Bkg"},
 	}
+	```

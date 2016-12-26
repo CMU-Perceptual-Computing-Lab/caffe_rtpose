@@ -55,7 +55,8 @@ Run on a video `vid.mp4`, render image frames as `output/frame%06d.jpg` and outp
 ## Output format:
 Each JSON file has a `bodies` array of objects, where each object has an array `joints` containing the joint locations and detection confidence formatted as `x1,y1,c1,x2,y2,c2,...`, where `c` is the confidence in [0,1].
 
-```{
+```
+{
 "version":0.1,
 "bodies":[
 {"joints":[1114.15,160.396,0.846207,...]},
@@ -63,6 +64,7 @@ Each JSON file has a `bodies` array of objects, where each object has an array `
 ]
 }
 ```
+
 where the joint order of the COCO parts is: (see examples/rtpose/modeldesc.h )
 ```
 	part2name {

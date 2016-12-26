@@ -9,7 +9,7 @@ Repo for the ECCV 2016 demo, "Realtime Multi­person Pose Estimation", Zhe Cao, 
 cd caffe_demo; make all
 ```
 
-## Running on an webcam:
+## Running with a webcam:
 ```
 ./build/examples/rtpose/rtpose.bin --num_gpu 1
 ```

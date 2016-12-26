@@ -15,22 +15,25 @@ make all
   ./build/examples/rtpose/rtpose.bin
   ```
 
-## Running on an HD video:
-./build/examples/rtpose/rtpose.bin --video ${vid} --num_gpu 4 --logtostderr --no_frame_drops --write_frames ${opath}/images/${fname}/frame --resolution 1280x720 --num_scales 3 --scale_gap 0.15 --write_json ${opath}/json/${fname}/frame
-
-## Running on a VGA video (resolution and net_resolution have to change because aspect ratio is not HD):
+## Running on a video:
 ./build/examples/rtpose/rtpose.bin --video ${vid} --num_gpu 4 --logtostderr --no_frame_drops --write_frames ${opath}/images/${fname}/frame --net_resolution 496x368 --resolution 640x480 --num_scales 3 --scale_gap 0.15 --write_json ${opath}/json/${fname}/frame
 
 ## Important options:
 --video input.mp4 <--- input video. If omitted, will use webcam (can be specified using --camera # ).
+
 --write_frames path/frame  <--- render images with this prefix: path/frame%06d.jpg
+
 --write_json path/frame  <--- output json file with joints with this prefix: path/frame%06d.json
+
 --no_frame_drops <--- Don't drop frames. Important for making offline results.
+
 --num_gpu 4 <--- Parallelize over this number of GPUs. Default is 1.
+
 --num_scales 3 --scale_gap 0.15  <--- Use 3 scales, 1, (1-0.15), (1-0.15*2). Default is one scale=1.
 
 (HD)
 --net_resolution 656x368 --resolution 1280x720 (These are the default values.)
+
 (VGA)
 --net_resolution 496x368 --resolution 640x480
 

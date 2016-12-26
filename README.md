@@ -9,6 +9,7 @@ Repo for the ECCV 2016 demo, "Realtime Multi­person Pose Estimation", Zhe Cao, 
 cd caffe_demo
 make all
   ```
+
 ## Running on an webcam:
 Run `rtpose.bin`:
   ```bash

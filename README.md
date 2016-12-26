@@ -5,7 +5,8 @@ Repo for the ECCV 2016 demo, "Realtime Multi­person Pose Estimation", Zhe Cao, 
 ## Quick Start
 1. See `model/getModels.sh` for caffe model downloads
 2. Build `caffe` & `rtpose.bin`:
-```cd caffe_demo; make all```
+```cd caffe_demo; make all
+```
 
 ## Running on an webcam:
 ```./build/examples/rtpose/rtpose.bin --num_gpu 1

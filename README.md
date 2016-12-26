@@ -11,35 +11,59 @@ cd caffe_demo; make all
 
 ## Running with a webcam:
 ```
-./build/examples/rtpose/rtpose.bin --num_gpu 1
+./build/examples/rtpose/rtpose.bin
 ```
 
 ## Running on a video:
 ```
-./build/examples/rtpose/rtpose.bin --video ${vid} --num_gpu 4 --logtostderr --no_frame_drops --write_frames ${opath}/images/${fname}/frame --net_resolution 496x368 --resolution 640x480 --num_scales 3 --scale_gap 0.15 --write_json ${opath}/json/${fname}/frame
+./build/examples/rtpose/rtpose.bin --video video_file.mp4
 ```
 
 ## Important options:
---video input.mp4 <--- input video. If omitted, will use webcam (can be specified using --camera # ).
+`--video input.mp4` <--- Input video. If omitted, will use webcam.
 
---write_frames path/frame  <--- render images with this prefix: path/frame%06d.jpg
+`--image_dir path_to_images/` <--- Run on all jpg, png, or bmp images in `path_to_images/`. If omitted, will use webcam.
 
---write_json path/frame  <--- output json file with joints with this prefix: path/frame%06d.json
+`--camera #` <--- Choose webcam number (if more than one webcam is connected, e.g., 1).
 
---no_frame_drops <--- Don't drop frames. Important for making offline results.
+`--write_frames path/`  <--- Render images with this prefix: path/frame%06d.jpg
 
---num_gpu 4 <--- Parallelize over this number of GPUs. Default is 1.
+`--write_json path/`  <--- Output json file with joints with this prefix: path/frame%06d.json
 
---num_scales 3 --scale_gap 0.15  <--- Use 3 scales, 1, (1-0.15), (1-0.15*2). Default is one scale=1.
+`--no_frame_drops` <--- Don't drop frames. Important for making offline results.
+
+`--no_display` <--- Don't open a display window. Useful if there's no X server.
+
+`--num_gpu 4` <--- Parallelize over this number of GPUs. Default is 1.
+
+`--num_scales 3 --scale_gap 0.15`  <--- Use 3 scales, 1, (1-0.15), (1-0.15*2). Default is one scale=1.
 
 (HD)
---net_resolution 656x368 --resolution 1280x720 (These are the default values.)
+`--net_resolution 656x368 --resolution 1280x720` (These are the default values.)
 
 (VGA)
---net_resolution 496x368 --resolution 640x480
+`--net_resolution 496x368 --resolution 640x480`
 
-## Coco parts: (see examples/rtpose/modeldesc.h )
+`--logtostderr` <--- Log messages to standard error.
 
+## Examples:
+Run on a video `vid.mp4`, render image frames as `output/frame%06d.jpg` and output json files as `output/frame%06d.json`, using 3 scales (1.00, 0.85, and 0.70), parallelized over 2 GPUs.
+```
+./build/examples/rtpose/rtpose.bin --video vid.mp4 --num_gpu 2 --no_frame_drops --write_frames output/ --write_json output/ --num_scales 3 --scale_gap 0.15
+```
+
+## Output format:
+Each JSON file has a `bodies` array of objects, where each object has an array `joints` containing the joint locations and detection confidence formatted as `x1,y1,c1,x2,y2,c2,...`, where `c` is the confidence in [0,1].
+```{
+"version":0.1,
+"bodies":[
+{"joints":[1114.15,160.396,0.846207,...]},
+{"joints":[...]},
+]
+}
+```
+
+## COCO parts: (see examples/rtpose/modeldesc.h )
 	part2name {
 		{0,  "Nose"},
 		{1,  "Neck"},
@@ -48,14 +72,14 @@ cd caffe_demo; make all
 		{4,  "RWrist"},
 		{5,  "LShoulder"},
 		{6,  "LElbow"},
-    {7,  "LWrist"},
+		{7,  "LWrist"},
 		{8,  "RHip"},
 		{9,  "RKnee"},
 		{10, "RAnkle"},
 		{11, "LHip"},
 		{12, "LKnee"},
 		{13, "LAnkle"},
-    {14, "REye"},
+		{14, "REye"},
 		{15, "LEye"},
 		{16, "REar"},
 		{17, "LEar"},

@@ -103,6 +103,9 @@ DEFINE_double(scale_gap, 0.3,
 DEFINE_int32(num_scales, 1,
 						 "Number of scales to average");
 
+DEFINE_bool(no_display, false,
+						 "Do not open a display window.");
+
 // These are set to match FLAGS_resolution
 int origin_width=960; //960 //1280 //640
 int origin_height=540; //540 //720 //480
@@ -113,6 +116,8 @@ int camera_frame_width=1920;
 int camera_frame_height=1080;
 int init_person_net_height = (368);
 int init_person_net_width = (356);
+
+double origin_init_scale = 1.0;
 
 #define boxsize 368
 #define fixed_scale_height 368
@@ -413,54 +418,25 @@ void render(int gid, float *heatmaps /*GPU*/) {
 	VLOG(2) << "Render time " << (get_wall_time()-tic)*1000.0 << " ms.";
 }
 void* getFrameFromDir(void *i) {
-std::string folderName = FLAGS_image_dir;
-if ( !boost::filesystem::exists( folderName ) ) return 0;
-  boost::filesystem::directory_iterator end_itr; // default construction yields past-the-end
-  for ( boost::filesystem::directory_iterator itr( folderName );
-        itr != end_itr;
-        ++itr )
-  {
-    if ( boost::filesystem::is_directory(itr->status()) ) {
-			// Skip directories
-		} else if (itr->path().extension()==".jpg" || itr->path().extension()==".png" || itr->path().extension()==".bmp") {
-			//	std::string filename = itr->path().string();
-			global.image_list.push_back( itr->path().string() );
-		}
-  }
-  std::sort(global.image_list.begin(), global.image_list.end());
-
-	    int global_counter = 1;
-			int frame_counter = 0;
-			Mat image_uchar, image_uchar_orig;
-			Mat image_uchar_prev;
-			double last_frame_time = -1;
-	    while(1) {
-				if (global.quit_threads) break;
-				// If the queue is too long, wait for a bit
-				if (global.input_queue.size()>10) {
-					usleep(10*1000.0);
-					continue;
-				}
+    int global_counter = 1;
+		int frame_counter = 0;
+		Mat image_uchar, image_uchar_orig;
+		Mat image_uchar_prev;
+		//double last_frame_time = -1;
+    while(1) {
+			if (global.quit_threads) break;
+			// If the queue is too long, wait for a bit
+			if (global.input_queue.size()>10) {
+				usleep(10*1000.0);
+				continue;
+			}
 
 
-				// Keep a count of how many frames we've seen in the video
-				frame_counter++;
+			// Keep a count of how many frames we've seen in the video
+			frame_counter++;
 
-				// This should probably be protected.
-				global.uistate.current_frame = frame_counter-1;
-
-				// If we reach the end of a video, loop
-				if (frame_counter >= global.image_list.size()) {
-					LOG(INFO) << "Done, exiting. # frames: " << frame_counter;
-					// Wait until the queues are clear before exiting
-						while (global.input_queue.size() || global.output_queue_ordered.size()) {
-							// Should actually wait until they finish writing to disk
-							usleep(500*1000.0);
-							continue;
-						}
-						global.quit_threads = true;
-						global.uistate.is_video_paused = true;
-				}
+			// This should probably be protected.
+			global.uistate.current_frame = frame_counter-1;
 
 			std::string filename = global.image_list[global.uistate.current_frame];
 			image_uchar_orig = cv::imread(filename.c_str(), CV_LOAD_IMAGE_COLOR);
@@ -470,10 +446,9 @@ if ( !boost::filesystem::exists( folderName ) ) return 0;
 			} else {
 				scale = origin_height/(double)image_uchar_orig.rows;
 			}
-			scale = 1.25*scale;
 			Mat M = Mat::eye(2,3,CV_64F);
-			M.at<double>(0,0) = 1.0/scale;
-			M.at<double>(1,1) = 1.0/scale;
+			M.at<double>(0,0) = scale;
+			M.at<double>(1,1) = scale;
 			warpAffine(image_uchar_orig, image_uchar, M,
 								 Size(origin_width, origin_height),
 								 CV_INTER_CUBIC,
@@ -514,20 +489,6 @@ if ( !boost::filesystem::exists( folderName ) ) return 0;
 			f.data_for_mat = new float [origin_height * origin_width * 3];
 			process_and_pad_image(f.data_for_mat, image_uchar, origin_width, origin_height, 0);
 
-			//resize
-			// int target_rows = fixed_scale_height; //some fixed number that is multiplier of 8
-			// int target_cols = float(fixed_scale_height) / image_uchar.rows * image_uchar.cols;
-
-			// if(target_cols % 8 != 0) {
-			// 	target_cols = 8 * (target_cols / 8 + 1);
-			// }
-
-
-			// if(INIT_PERSON_NET_WIDTH != target_cols || INIT_PERSON_NET_HEIGHT != target_rows){
-			// 	LOG(ERROR) << "Size not match: " << INIT_PERSON_NET_WIDTH << "  " << target_cols;
-			// 	continue;
-			// }
-
 			f.scale = scale;
 			//pad and transform to float
 			int offset = 3 * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
@@ -539,15 +500,12 @@ if ( !boost::filesystem::exists( folderName ) ) return 0;
 				float scale = start_scale - i*scale_gap;
 				target_width = 16 * ceil(INIT_PERSON_NET_WIDTH * scale /16);
 				target_height = 16 * ceil(INIT_PERSON_NET_HEIGHT * scale /16);
-				//LOG(ERROR) << "target_size[0][0]: " << target_width << " target_size[0][1] " << target_height;
 
-				// int padw, padh;
-				// padw = (INIT_PERSON_NET_WIDTH - target_width)/2;
-				// padh = (INIT_PERSON_NET_HEIGHT - target_height)/2;
-				// LOG(ERROR) << "padw " << padw << " padh " << padh;
 				CHECK_LE(target_width, INIT_PERSON_NET_WIDTH);
 				CHECK_LE(target_height, INIT_PERSON_NET_HEIGHT);
-
+				if (i==0) {
+					origin_init_scale = image_uchar.rows/(double)target_width;
+				}
 				resize(image_uchar, image_temp, Size(target_width, target_height), 0, 0, CV_INTER_AREA);
 				process_and_pad_image(f.data + i * offset, image_temp, INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT, 1);
 			}
@@ -570,6 +528,22 @@ if ( !boost::filesystem::exists( folderName ) ) return 0;
 			// }
 
 			global.input_queue.push(f);
+
+			// If we reach the end of a video, loop
+			if (frame_counter >= global.image_list.size()) {
+				LOG(INFO) << "Done, exiting. # frames: " << frame_counter;
+				// Wait until the queues are clear before exiting
+					while (global.input_queue.size()
+								|| global.output_queue.size()
+								|| global.output_queue_ordered.size()) {
+						// Should actually wait until they finish writing to disk
+						// This could exit before the last frame is written.
+						usleep(1000*1000.0);
+						continue;
+					}
+					global.quit_threads = true;
+					global.uistate.is_video_paused = true;
+			}
 			//LOG(ERROR) << "Frame " << f.index << " committed with init_time " << fixed << f.commit_time;
 			//LOG(ERROR) << "pushing frame " << index << " to input_queue, now size " << global.input_queue.size();
 			//printGlobal("prepareFrame    ");
@@ -603,11 +577,14 @@ void* getFrameFromCam(void *i){
 
     int global_counter = 1;
 		int frame_counter = 0;
-		Mat image_uchar;
+		Mat image_uchar, image_uchar_orig;
 		Mat image_uchar_prev;
 		double last_frame_time = -1;
     while(1) {
-			if (global.quit_threads) break;
+			if (global.quit_threads) {
+				break;
+			}
+
 			if (!FLAGS_video.empty() && FLAGS_no_frame_drops) {
 				// If the queue is too long, wait for a bit
 				if (global.input_queue.size()>10) {
@@ -615,7 +592,7 @@ void* getFrameFromCam(void *i){
 					continue;
 				}
 			}
-			cap >> image_uchar;
+			cap >> image_uchar_orig;
 			// Keep a count of how many frames we've seen in the video
 			if (!FLAGS_video.empty()) {
 				if (global.uistate.seek_to_frame!=-1) {
@@ -623,28 +600,12 @@ void* getFrameFromCam(void *i){
 					global.uistate.seek_to_frame = -1;
 				}
 				frame_counter = cap.get(CV_CAP_PROP_POS_FRAMES);
-
+				VLOG(3) << "Frame: " << frame_counter << " / " << cap.get(CV_CAP_PROP_FRAME_COUNT);
 				// This should probably be protected.
 				global.uistate.current_frame = frame_counter-1;
 				if (global.uistate.is_video_paused) {
 					cap.set(CV_CAP_PROP_POS_FRAMES, frame_counter-1);
 					frame_counter -= 1;
-				}
-
-			// If we reach the end of a video, loop
-				if (frame_counter >= cap.get(CV_CAP_PROP_FRAME_COUNT)) {
-					LOG(INFO) << "Looping video after " << frame_counter-1 << " frames";
-			    cap.set(CV_CAP_PROP_POS_FRAMES, 0);
-					// Wait until the queues are clear before exiting
-					if (!FLAGS_write_frames.empty()) {
-						while (global.input_queue.size() || global.output_queue_ordered.size()) {
-							// Should actually wait until they finish writing to disk
-							usleep(500*1000.0);
-							continue;
-						}
-						global.quit_threads = true;
-						global.uistate.is_video_paused = true;
-					}
 				}
 
 				// Sleep to get the right frame rate.
@@ -664,56 +625,42 @@ void* getFrameFromCam(void *i){
 			}	else {
 				// From camera, just increase counter.
 				if (global.uistate.is_video_paused) {
-					image_uchar = image_uchar_prev;
+					image_uchar_orig = image_uchar_prev;
 				}
-				image_uchar_prev = image_uchar;
+				image_uchar_prev = image_uchar_orig;
 				frame_counter++;
 			}
 
-		if (image_uchar.cols>origin_width) {
-			resize(image_uchar, image_uchar, Size(origin_width, origin_height), 0, 0, CV_INTER_AREA);
+		// TODO: The entire scaling code should be rewritten and better matched
+		// to the imresize_layer. Confusingly, for the demo, there's an intermediate
+		// display resolution to which the original image is resized.
+
+		double scale = 0;
+		if (image_uchar_orig.cols/(double)image_uchar_orig.rows>origin_width/(double)origin_height) {
+			scale = origin_width/(double)image_uchar_orig.cols;
 		} else {
-			resize(image_uchar, image_uchar, Size(origin_width, origin_height), 0, 0, CV_INTER_CUBIC);
+			scale = origin_height/(double)image_uchar_orig.rows;
 		}
-  		//char imgname[50];
-		//sprintf(imgname, "../dome/%03d.jpg", global_counter);
-		//sprintf(imgname, "../frame/frame%04d.png", global_counter);
-		//image_uchar = imread(imgname, 1);
-		//sprintf(imgname, "../Ian/hd%08d_00_00.png", global_counter*2 + 3500); //2700
+		VLOG(4) << "Scale to origin_width/height: " << scale;
+		Mat M = Mat::eye(2,3,CV_64F);
+		M.at<double>(0,0) = scale;
+		M.at<double>(1,1) = scale;
+		warpAffine(image_uchar_orig, image_uchar, M,
+							 Size(origin_width, origin_height),
+							 CV_INTER_CUBIC,
+							 cv::BORDER_CONSTANT, cv::Scalar(0,0,0));
+		// resize(image_uchar, image_uchar, Size(new_width, new_height), 0, 0, CV_INTER_CUBIC);
+		image_uchar_prev = image_uchar_orig;
 
-		// sprintf(imgname, "../domeHD/hd%08d_00_07.png", global_counter + 2700); //2700
-		// image_uchar = imread(imgname, 1);
-		// resize(image_uchar, image_uchar, Size(960, 540), 0, 0, CV_INTER_AREA);
-		// //LOG(ERROR) << "global_counter " << global_counter;
-
-		// if(global_counter>=600){  //449 //250
-		// 	imshow("here",image_uchar);
-		// 	waitKey();
-		// }
-
-		//waitKey(10); //120 //400
 		if( image_uchar.empty() ) continue;
 
 		Frame f;
+		f.scale = scale;
 		f.index = global_counter++;
 		f.video_frame_number = global.uistate.current_frame;
 		f.data_for_wrap = new unsigned char [origin_height * origin_width * 3]; //fill after process
 		f.data_for_mat = new float [origin_height * origin_width * 3];
 		process_and_pad_image(f.data_for_mat, image_uchar, origin_width, origin_height, 0);
-
-		//resize
-		// int target_rows = fixed_scale_height; //some fixed number that is multiplier of 8
-		// int target_cols = float(fixed_scale_height) / image_uchar.rows * image_uchar.cols;
-
-		// if(target_cols % 8 != 0) {
-		// 	target_cols = 8 * (target_cols / 8 + 1);
-		// }
-
-
-		// if(INIT_PERSON_NET_WIDTH != target_cols || INIT_PERSON_NET_HEIGHT != target_rows){
-		// 	LOG(ERROR) << "Size not match: " << INIT_PERSON_NET_WIDTH << "  " << target_cols;
-		// 	continue;
-		// }
 
 		//pad and transform to float
 		int offset = 3 * INIT_PERSON_NET_HEIGHT * INIT_PERSON_NET_WIDTH;
@@ -721,20 +668,34 @@ void* getFrameFromCam(void *i){
 		int target_width, target_height;
 		Mat image_temp;
 		//LOG(ERROR) << "f.index: " << f.index;
+		VLOG(4) << "INIT_PERSON_NET_WIDTH/HEIGHT: " << INIT_PERSON_NET_WIDTH << " x " << INIT_PERSON_NET_HEIGHT;
+		VLOG(4) << "origin_width/height: " << origin_width << " x " << origin_height;
+		int start_width = INIT_PERSON_NET_WIDTH;
+		int start_height = INIT_PERSON_NET_HEIGHT;
+		if (INIT_PERSON_NET_WIDTH/(double)origin_width < INIT_PERSON_NET_HEIGHT/(double)origin_height) {
+			start_width = INIT_PERSON_NET_WIDTH;
+			start_height = origin_height * INIT_PERSON_NET_WIDTH/(double)origin_width;
+		}  else {
+			start_width = origin_width * INIT_PERSON_NET_HEIGHT/(double)origin_height;
+			start_height = INIT_PERSON_NET_HEIGHT;
+		}
+		VLOG(4) << "start_width/height: " << start_width << " x " << start_height;
 		for(int i=0; i < batch_size; i++){
 			float scale = start_scale - i*scale_gap;
 			target_width = 16 * ceil(INIT_PERSON_NET_WIDTH * scale /16);
 			target_height = 16 * ceil(INIT_PERSON_NET_HEIGHT * scale /16);
-			//LOG(ERROR) << "target_size[0][0]: " << target_width << " target_size[0][1] " << target_height;
 
-			// int padw, padh;
-			// padw = (INIT_PERSON_NET_WIDTH - target_width)/2;
-			// padh = (INIT_PERSON_NET_HEIGHT - target_height)/2;
-			// LOG(ERROR) << "padw " << padw << " padh " << padh;
 			CHECK_LE(target_width, INIT_PERSON_NET_WIDTH);
 			CHECK_LE(target_height, INIT_PERSON_NET_HEIGHT);
 
-			resize(image_uchar, image_temp, Size(target_width, target_height), 0, 0, CV_INTER_AREA);
+			int im_target_w = floor(start_width*target_width/INIT_PERSON_NET_WIDTH);
+			int im_target_h = floor(start_height*target_width/INIT_PERSON_NET_WIDTH);
+
+			VLOG(4) << "im_target_w/h: " << im_target_w << " x " << im_target_h;
+			if (i==0) {
+				origin_init_scale = image_uchar.rows/(double)im_target_w;
+			}
+			resize(image_uchar, image_temp, Size(im_target_w, im_target_h), 0, 0, CV_INTER_AREA);
 			process_and_pad_image(f.data + i * offset, image_temp, INIT_PERSON_NET_WIDTH, INIT_PERSON_NET_HEIGHT, 1);
 		}
 		f.commit_time = get_wall_time();
@@ -756,6 +717,29 @@ void* getFrameFromCam(void *i){
 		// }
 
 		global.input_queue.push(f);
+
+		// If we reach the end of a video, loop
+		if (!FLAGS_video.empty() && frame_counter >= cap.get(CV_CAP_PROP_FRAME_COUNT)) {
+			if (!FLAGS_write_frames.empty()) {
+				LOG(INFO) << "Done, exiting. # frames: " << frame_counter;
+				// This is the last frame (also the last emmitted frame)
+				// Wait until the queues are clear before exiting
+				while (global.input_queue.size()
+							|| global.output_queue.size()
+							|| global.output_queue_ordered.size()) {
+					// Should actually wait until they finish writing to disk.
+					// This could exit before the last frame is written.
+					usleep(1000*1000.0);
+					continue;
+				}
+				global.quit_threads = true;
+				global.uistate.is_video_paused = true;
+			} else {
+				LOG(INFO) << "Looping video after " << cap.get(CV_CAP_PROP_FRAME_COUNT) << " frames";
+				cap.set(CV_CAP_PROP_POS_FRAMES, 0);
+			}
+		}
+
 		//LOG(ERROR) << "Frame " << f.index << " committed with init_time " << fixed << f.commit_time;
 		//LOG(ERROR) << "pushing frame " << index << " to input_queue, now size " << global.input_queue.size();
 		//printGlobal("prepareFrame    ");
@@ -1024,8 +1008,8 @@ for(int i = 0; i < subset.size(); i++){
 			int idx = int(subset[i][j]);
 			if(idx){
 				joints[cnt*NUM_PARTS*3 + j*3 +2] = peaks[idx];
-				joints[cnt*NUM_PARTS*3 + j*3 +1] = peaks[idx-1]* origin_height/ (float)INIT_PERSON_NET_HEIGHT;//(peaks[idx-1] - padh) * ratio_h;
-				joints[cnt*NUM_PARTS*3 + j*3] = peaks[idx-2]* origin_width/ (float)INIT_PERSON_NET_WIDTH;//(peaks[idx-2] -padw) * ratio_w;
+				joints[cnt*NUM_PARTS*3 + j*3 +1] = peaks[idx-1]* origin_init_scale;
+				joints[cnt*NUM_PARTS*3 + j*3] = peaks[idx-2]* origin_init_scale;
 				//cout << peaks[idx-2] << " " << peaks[idx-1] << " " << peaks[idx] << endl;
 			}
 			else{
@@ -1767,7 +1751,9 @@ void* displayFrame(void *i) { //single thread
 				cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,255,255), 1);
 		}
 
-		imshow("video", wrap_frame);
+		if (!FLAGS_no_display) {
+			imshow("video", wrap_frame);
+		}
 		if (!FLAGS_write_frames.empty()) {
 			//double a = get_wall_time();
 			vector<int> compression_params;
@@ -1775,11 +1761,11 @@ void* displayFrame(void *i) { //single thread
 			compression_params.push_back(98);
 			char fname[256];
 			if (FLAGS_image_dir.empty()) {
-				sprintf(fname, "%s%06d.jpg", FLAGS_write_frames.c_str(), f.video_frame_number);
+				sprintf(fname, "%s/frame%06d.jpg", FLAGS_write_frames.c_str(), f.video_frame_number);
 			} else {
 				boost::filesystem::path p(global.image_list[f.video_frame_number]);
 				string rawname = p.stem().string();
-				sprintf(fname, "%s/%s_lm.jpg", FLAGS_write_frames.c_str(), rawname.c_str());
+				sprintf(fname, "%s/%s.jpg", FLAGS_write_frames.c_str(), rawname.c_str());
 			}
 
 			cv::imwrite(fname, wrap_frame, compression_params);
@@ -1787,15 +1773,12 @@ void* displayFrame(void *i) { //single thread
 		}
 
 		if (!FLAGS_write_json.empty()) {
-			double scale = 1.0;
-			if (!FLAGS_image_dir.empty()) {
-				scale = f.scale;
-			}
+			double scale = 1.0/f.scale;
 			const int num_parts = model_descriptor->num_parts();
-			double a = get_wall_time();
+			//double a = get_wall_time();
 			char fname[256];
 			if (FLAGS_image_dir.empty()) {
-				sprintf(fname, "%s%06d_lm.json", FLAGS_write_json.c_str(), f.video_frame_number);
+				sprintf(fname, "%s/frame%06d.json", FLAGS_write_json.c_str(), f.video_frame_number);
 			} else {
 				boost::filesystem::path p(global.image_list[f.video_frame_number]);
 				string rawname = p.stem().string();
@@ -1896,9 +1879,11 @@ int rtcpm() {
 		cv::setWindowProperty("video", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN);
 		global.uistate.is_fullscreen = true;
 	} else {
-		cv::namedWindow("video", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
-		cv::setWindowProperty("video", CV_WND_PROP_FULLSCREEN, CV_WINDOW_NORMAL);
-		cv::resizeWindow("video", origin_width, origin_height);
+		if (!FLAGS_no_display) {
+			cv::namedWindow("video", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+			cv::setWindowProperty("video", CV_WND_PROP_FULLSCREEN, CV_WINDOW_NORMAL);
+			cv::resizeWindow("video", origin_width, origin_height);
+		}
 		global.uistate.is_fullscreen = false;
 	}
 	/* push all frames for now (single thread)
@@ -2056,6 +2041,27 @@ void error(const char *msg){
 int main(int argc, char *argv[]) {
 	::google::InitGoogleLogging("rtcpm");
 	gflags::ParseCommandLineFlags(&argc, &argv, true);
+	// Open & read image dir if present
+	if (!FLAGS_image_dir.empty()) {
+		std::string folderName = FLAGS_image_dir;
+		if ( !boost::filesystem::exists( folderName ) ) {
+			LOG(ERROR) << "Folder " << folderName << " does not exist.";
+			return 0;
+		}
+	  boost::filesystem::directory_iterator end_itr; // default construction yields past-the-end
+	  for ( boost::filesystem::directory_iterator itr( folderName );
+	        itr != end_itr;
+	        ++itr ) {
+	    if ( boost::filesystem::is_directory(itr->status()) ) {
+				// Skip directories
+			} else if (itr->path().extension()==".jpg" || itr->path().extension()==".png" || itr->path().extension()==".bmp") {
+				//	std::string filename = itr->path().string();
+				global.image_list.push_back( itr->path().string() );
+			}
+	  }
+	  std::sort(global.image_list.begin(), global.image_list.end());
+		CHECK_GE(global.image_list.size(),0);
+	}
 	// Parse requested resolution string
 	{
 		int nRead = sscanf(FLAGS_resolution.c_str(), "%dx%d",
@@ -2063,6 +2069,23 @@ int main(int argc, char *argv[]) {
 		CHECK_EQ(nRead,2) << "Error, resolution format ("
 											<<  FLAGS_resolution
 											<< ") invalid, should be e.g., 960x540 ";
+		if (origin_width==-1 && !FLAGS_video.empty()) {
+			VideoCapture cap;
+			CHECK(cap.open(FLAGS_video)) << "Couldn't open video " << FLAGS_video;
+			origin_width = cap.get(CV_CAP_PROP_FRAME_WIDTH);
+			origin_height = cap.get(CV_CAP_PROP_FRAME_HEIGHT);
+			LOG(INFO) << "Setting display resolution from video: " << origin_width << "x" << origin_height;
+		} else if (origin_width==-1 && !FLAGS_image_dir.empty()) {
+			cv::Mat image_uchar_orig = cv::imread(global.image_list[0].c_str(), CV_LOAD_IMAGE_COLOR);
+			origin_width = image_uchar_orig.cols;
+			origin_height = image_uchar_orig.rows;
+			LOG(INFO) << "Setting display resolution from first image: " << origin_width << "x" << origin_height;
+		} else if (origin_width==-1) {
+			LOG(ERROR) << "Invalid resolution without video/images: " << origin_width << "x" << origin_height;
+			exit(1);
+		} else {
+			LOG(INFO) << "Display resolution: " << origin_width << "x" << origin_height;
+		}
 		nRead = sscanf(FLAGS_camera_resolution.c_str(), "%dx%d",
 											 &camera_frame_width, &camera_frame_height);
 		CHECK_EQ(nRead,2) << "Error, camera resolution format ("
@@ -2073,11 +2096,28 @@ int main(int argc, char *argv[]) {
 		CHECK_EQ(nRead,2) << "Error, net resolution format ("
 											<<  FLAGS_net_resolution
 											<< ") invalid, should be e.g., 656x368 (multiples of 16)";
+		LOG(INFO) << "Net resolution: " << init_person_net_width << "x" << init_person_net_height;
+	}
 
+	if (!FLAGS_write_frames.empty()) {
+		// Create folder if it does not exist
+		boost::filesystem::path dir(FLAGS_write_frames);
+		if (!boost::filesystem::is_directory(dir) && !boost::filesystem::create_directory(dir)) {
+			LOG(ERROR) << "Could not write to or create directory " << dir;
+			return 1;
+		}
+	}
+
+	if (!FLAGS_write_json.empty()) {
+		// Create folder if it does not exist
+		boost::filesystem::path dir(FLAGS_write_json);
+		if (!boost::filesystem::is_directory(dir) && !boost::filesystem::create_directory(dir)) {
+			LOG(ERROR) << "Could not write to or create directory " << dir;
+			return 1;
+		}
 	}
 
 	NUM_GPU = FLAGS_num_gpu;
-
 
 	global.part_to_show = FLAGS_part_to_show;
 	/* server warming up */

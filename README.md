@@ -56,4 +56,4 @@ make all
 		{16, "REar"},
 		{17, "LEar"},
 		{18, "Bkg"},
-	} /* End initializers */
+	}

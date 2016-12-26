@@ -10,7 +10,7 @@ cd caffe_demo
 make all
   ```
 ## Running on an webcam:
-3. Run `rtpose.bin`:
+Run `rtpose.bin`:
   ```bash
   ./build/examples/rtpose/rtpose.bin
   ```

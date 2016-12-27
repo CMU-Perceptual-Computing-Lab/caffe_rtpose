@@ -41,7 +41,8 @@
 #include "caffe/util/blocking_queue.hpp"
 #include "caffe/util/render_functions.hpp"
 
-#include "modelDescriptor.h"
+#include "rtpose/modelDescriptor.h"
+#include "rtpose/modelDescriptorFactory.h"
 
 // Flags (rtpose.bin --help)
 DEFINE_bool(fullscreen,             false,          "Run in fullscreen mode (press f during runtime to toggle)");
@@ -85,22 +86,19 @@ const auto MAX_PEOPLE = RENDER_MAX_PEOPLE;  // defined in render_functions.hpp
 const auto BOX_SIZE = 368;
 const auto BUFFER_SIZE = 4;    //affects latency
 const auto MAX_NUM_PARTS = 70;
-
-double origin_init_scale = 1.0;
+double ORIGIN_INIT_SCALE = 1.0;
 
 
 // global queues for I/O
-struct GLOBAL {
+struct Global {
     caffe::BlockingQueue<Frame> input_queue; //have to pop
-    caffe::BlockingQueue<std::pair<int, std::string> > frame_file_queue;
     caffe::BlockingQueue<Frame> output_queue; //have to pop
     caffe::BlockingQueue<Frame> output_queue_ordered;
     caffe::BlockingQueue<Frame> output_queue_mated;
     std::priority_queue<int, std::vector<int>, std::greater<int> > dropped_index;
     std::vector< std::string > image_list;
-    std::mutex mtx;
+    std::mutex mutex;
     int part_to_show;
-    float target_size[1][2];
     bool quit_threads;
     // Parameters
     float nms_threshold;
@@ -132,16 +130,13 @@ struct GLOBAL {
  };
 
 // network copy for each gpu thread
-struct NET_COPY {
-    caffe::Net<float>* person_net;
-    caffe::Net<float>* pose_net;
+struct NetCopy {
+    caffe::Net<float> *person_net;
     std::vector<int> num_people;
     int nblob_person;
-    int nblob_pose;
-    int total_num_people;
     int nms_max_peaks;
     int nms_num_parts;
-    ModelDescriptor *model_descriptor;
+    std::unique_ptr<ModelDescriptor> up_model_descriptor;
     float* canvas; // GPU memory
     float* joints; // GPU memory
 };
@@ -156,11 +151,8 @@ struct ColumnCompare
     }
 };
 
-GLOBAL global;
-NET_COPY net_copy[4];
-
-// TODO: Clean this up
-ModelDescriptor *model_descriptor = 0;
+Global global;
+std::vector<NetCopy> net_copies;
 
 int rtcpm();
 bool handleKey(int c);
@@ -177,15 +169,8 @@ double get_wall_time() {
         //  Handle error
         return 0;
     }
-    return (double)time.tv_sec + (double)time.tv_usec * .000001;
+    return (double)time.tv_sec + (double)time.tv_usec * 1e-6;
     //return (double)time.tv_usec;
-}
-
-void printGlobal(std::string src) {
-    VLOG(3) << src << "\t input_queue: " << global.input_queue.size()
-               << " | output_queue: " << global.output_queue.size()
-               << " | output_queue_ordered: " << global.output_queue_ordered.size()
-               << " | output_queue_mated: " << global.output_queue_mated.size();
 }
 
 void warmup(int device_id) {
@@ -198,50 +183,45 @@ void warmup(int device_id) {
 
     LOG(INFO) << "GPU " << device_id << ": copying to person net";
     FLAGS_logtostderr = 0;
-    net_copy[device_id].person_net = new caffe::Net<float>(PERSON_DETECTOR_PROTO, caffe::TEST);
-    net_copy[device_id].person_net->CopyTrainedLayersFrom(PERSON_DETECTOR_CAFFEMODEL);
+    net_copies[device_id].person_net = new caffe::Net<float>(PERSON_DETECTOR_PROTO, caffe::TEST);
+    net_copies[device_id].person_net->CopyTrainedLayersFrom(PERSON_DETECTOR_CAFFEMODEL);
 
-    net_copy[device_id].nblob_person = net_copy[device_id].person_net->blob_names().size();
-    net_copy[device_id].num_people.resize(BATCH_SIZE);
-    std::vector<int> shape(4);
-    shape[0] = BATCH_SIZE;
-    shape[1] = 3;
-    shape[2] = NET_RESOLUTION_HEIGHT;
-    shape[3] = NET_RESOLUTION_WIDTH;
+    net_copies[device_id].nblob_person = net_copies[device_id].person_net->blob_names().size();
+    net_copies[device_id].num_people.resize(BATCH_SIZE);
+    const std::vector<int> shape { {BATCH_SIZE, 3, NET_RESOLUTION_HEIGHT, NET_RESOLUTION_WIDTH} };
 
-    net_copy[device_id].person_net->blobs()[0]->Reshape(shape);
-    net_copy[device_id].person_net->Reshape();
+    net_copies[device_id].person_net->blobs()[0]->Reshape(shape);
+    net_copies[device_id].person_net->Reshape();
     FLAGS_logtostderr = logtostderr;
 
-    caffe::NmsLayer<float> *nms_layer =
-        (caffe::NmsLayer<float>*)net_copy[device_id].person_net->layer_by_name("nms").get();
-    net_copy[device_id].nms_max_peaks = nms_layer->GetMaxPeaks();
+    caffe::NmsLayer<float> *nms_layer = (caffe::NmsLayer<float>*)net_copies[device_id].person_net->layer_by_name("nms").get();
+    net_copies[device_id].nms_max_peaks = nms_layer->GetMaxPeaks();
 
 
     caffe::ImResizeLayer<float> *resize_layer =
-        (caffe::ImResizeLayer<float>*)net_copy[device_id].person_net->layer_by_name("resize").get();
+        (caffe::ImResizeLayer<float>*)net_copies[device_id].person_net->layer_by_name("resize").get();
 
     resize_layer->SetStartScale(START_SCALE);
     resize_layer->SetScaleGap(SCALE_GAP);
     LOG(INFO) << "start_scale = " << START_SCALE;
 
-    net_copy[device_id].nms_max_peaks = nms_layer->GetMaxPeaks();
+    net_copies[device_id].nms_max_peaks = nms_layer->GetMaxPeaks();
 
-    net_copy[device_id].nms_num_parts = nms_layer->GetNumParts();
-    CHECK_LE(net_copy[device_id].nms_num_parts, MAX_NUM_PARTS)
-        << "num_parts in NMS layer (" << net_copy[device_id].nms_num_parts << ") "
+    net_copies[device_id].nms_num_parts = nms_layer->GetNumParts();
+    CHECK_LE(net_copies[device_id].nms_num_parts, MAX_NUM_PARTS)
+        << "num_parts in NMS layer (" << net_copies[device_id].nms_num_parts << ") "
         << "too big ( MAX_NUM_PARTS )";
 
-    if (net_copy[device_id].nms_num_parts==15) {
-        net_copy[device_id].model_descriptor = new MPIModelDescriptor();
+    if (net_copies[device_id].nms_num_parts==15) {
+        ModelDescriptorFactory::createModelDescriptor(ModelDescriptorFactory::Type::MPI_15, net_copies[device_id].up_model_descriptor);
         global.nms_threshold = nms_layer->GetThreshold();
         global.connect_min_subset_cnt = 3;
         global.connect_min_subset_score = 0.4;
         global.connect_inter_threshold = 0.01;
         global.connect_inter_min_above_threshold = 8;
         LOG(INFO) << "Selecting MPI model.";
-    } else if (net_copy[device_id].nms_num_parts==18) {
-        net_copy[device_id].model_descriptor = new COCOModelDescriptor();
+    } else if (net_copies[device_id].nms_num_parts==18) {
+        ModelDescriptorFactory::createModelDescriptor(ModelDescriptorFactory::Type::COCO_18, net_copies[device_id].up_model_descriptor);
         global.nms_threshold = 0.05;
         global.connect_min_subset_cnt = 3;
         global.connect_min_subset_score = 0.4;
@@ -250,15 +230,13 @@ void warmup(int device_id) {
     } else {
         CHECK(0) << "Unknown number of parts! Couldn't set model";
     }
-    model_descriptor = net_copy[device_id].model_descriptor;
 
     //dry run
     LOG(INFO) << "Dry running...";
-    net_copy[device_id].person_net->ForwardFrom(0);
-    //net_copy[device_id].pose_net->ForwardFrom(0);
+    net_copies[device_id].person_net->ForwardFrom(0);
     LOG(INFO) << "Success.";
-    cudaMalloc(&net_copy[device_id].canvas, RESOLUTION_WIDTH * RESOLUTION_HEIGHT * 3 * sizeof(float));
-    cudaMalloc(&net_copy[device_id].joints, MAX_NUM_PARTS*3*MAX_PEOPLE * sizeof(float) );
+    cudaMalloc(&net_copies[device_id].canvas, RESOLUTION_WIDTH * RESOLUTION_HEIGHT * 3 * sizeof(float));
+    cudaMalloc(&net_copies[device_id].joints, MAX_NUM_PARTS*3*MAX_PEOPLE * sizeof(float) );
 }
 
 void process_and_pad_image(float* target, cv::Mat oriImg, int tw, int th, bool normalize) {
@@ -295,30 +273,30 @@ void process_and_pad_image(float* target, cv::Mat oriImg, int tw, int th, bool n
 
 void render(int gid, float *heatmaps /*GPU*/) {
     float* centers = 0;
-    float* poses    = net_copy[gid].joints;
+    float* poses    = net_copies[gid].joints;
 
     double tic = get_wall_time();
-    if (net_copy[gid].model_descriptor->num_parts()==15) {
-        caffe::render_mpi_parts(net_copy[gid].canvas, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT,
-        heatmaps, BOX_SIZE, centers, poses, net_copy[gid].num_people, global.part_to_show);
-    } else if (net_copy[gid].model_descriptor->num_parts()==18) {
-        if (global.part_to_show-1<=net_copy[gid].model_descriptor->num_parts()) {
-            caffe::render_coco_parts(net_copy[gid].canvas,
+    if (net_copies[gid].up_model_descriptor->get_number_parts()==15) {
+        caffe::render_mpi_parts(net_copies[gid].canvas, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT,
+        heatmaps, BOX_SIZE, centers, poses, net_copies[gid].num_people, global.part_to_show);
+    } else if (net_copies[gid].up_model_descriptor->get_number_parts()==18) {
+        if (global.part_to_show-1<=net_copies[gid].up_model_descriptor->get_number_parts()) {
+            caffe::render_coco_parts(net_copies[gid].canvas,
             RESOLUTION_WIDTH, RESOLUTION_HEIGHT,
             NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT,
             heatmaps, BOX_SIZE, centers, poses,
-            net_copy[gid].num_people, global.part_to_show, global.uistate.is_googly_eyes);
+            net_copies[gid].num_people, global.part_to_show, global.uistate.is_googly_eyes);
         } else {
-            int aff_part = ((global.part_to_show-1)-net_copy[gid].model_descriptor->num_parts()-1)*2;
+            int aff_part = ((global.part_to_show-1)-net_copies[gid].up_model_descriptor->get_number_parts()-1)*2;
             int num_parts_accum = 1;
             if (aff_part==0) {
                 num_parts_accum = 19;
             } else {
                 aff_part = aff_part-2;
                 }
-                aff_part += 1+net_copy[gid].model_descriptor->num_parts();
-                caffe::render_coco_aff(net_copy[gid].canvas, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT,
-                heatmaps, BOX_SIZE, centers, poses, net_copy[gid].num_people, aff_part, num_parts_accum);
+                aff_part += 1+net_copies[gid].up_model_descriptor->get_number_parts();
+                caffe::render_coco_aff(net_copies[gid].canvas, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT,
+                heatmaps, BOX_SIZE, centers, poses, net_copies[gid].num_people, aff_part, num_parts_accum);
         }
     }
     VLOG(2) << "Render time " << (get_wall_time()-tic)*1000.0 << " ms.";
@@ -389,7 +367,7 @@ void* getFrameFromDir(void *i) {
             CHECK_LE(target_height, NET_RESOLUTION_HEIGHT);
 
             if (i==0) {
-                origin_init_scale = image_uchar.rows/(double)target_width;
+                ORIGIN_INIT_SCALE = image_uchar.rows/(double)target_width;
             }
             resize(image_uchar, image_temp, cv::Size(target_width, target_height), 0, 0, CV_INTER_AREA);
             process_and_pad_image(frame.data + i * offset, image_temp, NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT, 1);
@@ -558,7 +536,7 @@ void* getFrameFromCam(void *i) {
   
             VLOG(4) << "im_target_w/h: " << im_target_w << " x " << im_target_h;
             if (i==0) {
-                origin_init_scale = image_uchar.rows/(double)im_target_w;
+                ORIGIN_INIT_SCALE = image_uchar.rows/(double)im_target_w;
             }
             cv::resize(image_uchar, image_temp, cv::Size(im_target_w, im_target_h), 0, 0, CV_INTER_AREA);
             process_and_pad_image(frame.data + i * offset, image_temp, NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT, 1);
@@ -602,24 +580,23 @@ int connectLimbs(
     float *joints,
     ModelDescriptor *model_descriptor) {
 
-        const auto num_parts = model_descriptor->num_parts();
-        const auto limbSeq = model_descriptor->get_limb_seq();
+        const auto num_parts = model_descriptor->get_number_parts();
+        const auto limbSeq = model_descriptor->get_limb_sequence();
         const auto mapIdx = model_descriptor->get_map_idx();
-        const auto num_limb_seq = model_descriptor->num_limb_seq();
+        const auto number_limb_seq = model_descriptor->number_limb_sequence();
 
         int SUBSET_CNT = num_parts+2;
         int SUBSET_SCORE = num_parts+1;
         int SUBSET_SIZE = num_parts+3;
 
         CHECK_EQ(num_parts, 15);
-        CHECK_EQ(num_limb_seq, 14);
+        CHECK_EQ(number_limb_seq, 14);
 
         int peaks_offset = 3*(max_peaks+1);
         subset.clear();
         connection.clear();
 
-        for(int k = 0; k < num_limb_seq; k++) {
-            //float* score_mid = heatmap_pointer + mapIdx[k] * NET_RESOLUTION_HEIGHT * NET_RESOLUTION_WIDTH;
+        for(int k = 0; k < number_limb_seq; k++) {
             const float* map_x = heatmap_pointer + mapIdx[2*k] * NET_RESOLUTION_HEIGHT * NET_RESOLUTION_WIDTH;
             const float* map_y = heatmap_pointer + mapIdx[2*k+1] * NET_RESOLUTION_HEIGHT * NET_RESOLUTION_WIDTH;
 
@@ -773,7 +750,7 @@ int connectLimbs(
         }
     }
 
-    //** joints by deleteing some rows of subset which has few parts occur
+    //** joints by deleting some rows of subset which has few parts occur
     int cnt = 0;
     for(int i = 0; i < subset.size(); i++) {
         if (subset[i][SUBSET_CNT]>=global.connect_min_subset_cnt && (subset[i][SUBSET_SCORE]/subset[i][SUBSET_CNT])>global.connect_min_subset_score) {
@@ -781,8 +758,8 @@ int connectLimbs(
                 int idx = int(subset[i][j]);
                 if (idx) {
                     joints[cnt*num_parts*3 + j*3 +2] = peaks[idx];
-                    joints[cnt*num_parts*3 + j*3 +1] = peaks[idx-1] * origin_init_scale;
-                    joints[cnt*num_parts*3 + j*3] = peaks[idx-2] * origin_init_scale;
+                    joints[cnt*num_parts*3 + j*3 +1] = peaks[idx-1] * ORIGIN_INIT_SCALE;
+                    joints[cnt*num_parts*3 + j*3] = peaks[idx-2] * ORIGIN_INIT_SCALE;
                 }
                 else{
                     joints[cnt*num_parts*3 + j*3 +2] = 0;
@@ -803,7 +780,7 @@ int distanceThresholdPeaks(const float *in_peaks, int max_peaks,
     // Post-process peaks to remove those which are within sqrt(dist_threshold2)
     // of each other.
 
-    const auto num_parts = model_descriptor->num_parts();
+    const auto num_parts = model_descriptor->get_number_parts();
     const float dist_threshold2 = 6*6;
     int peaks_offset = 3*(max_peaks+1);
 
@@ -862,13 +839,13 @@ int connectLimbsCOCO(
     float *joints,
     ModelDescriptor *model_descriptor) {
         /* Parts Connection ---------------------------------------*/
-        const auto num_parts = model_descriptor->num_parts();
-        const auto limbSeq = model_descriptor->get_limb_seq();
+        const auto num_parts = model_descriptor->get_number_parts();
+        const auto limbSeq = model_descriptor->get_limb_sequence();
         const auto mapIdx = model_descriptor->get_map_idx();
-        const auto num_limb_seq = model_descriptor->num_limb_seq();
+        const auto number_limb_seq = model_descriptor->number_limb_sequence();
 
         CHECK_EQ(num_parts, 18) << "Wrong connection function for model";
-        CHECK_EQ(num_limb_seq, 19) << "Wrong connection function for model";
+        CHECK_EQ(number_limb_seq, 19) << "Wrong connection function for model";
 
         int SUBSET_CNT = num_parts+2;
         int SUBSET_SCORE = num_parts+1;
@@ -880,8 +857,7 @@ int connectLimbsCOCO(
         subset.clear();
         connection.clear();
 
-        for(int k = 0; k < num_limb_seq; k++) {
-            //float* score_mid = heatmap_pointer + mapIdx[k] * NET_RESOLUTION_HEIGHT * NET_RESOLUTION_WIDTH;
+        for(int k = 0; k < number_limb_seq; k++) {
             const float* map_x = heatmap_pointer + mapIdx[2*k] * NET_RESOLUTION_HEIGHT * NET_RESOLUTION_WIDTH;
             const float* map_y = heatmap_pointer + mapIdx[2*k+1] * NET_RESOLUTION_HEIGHT * NET_RESOLUTION_WIDTH;
 
@@ -1139,14 +1115,15 @@ void* processFrame(void *i) {
     std::vector< std::vector<double>> subset;
     std::vector< std::vector< std::vector<double> > > connection;
 
-    const boost::shared_ptr<caffe::Blob<float>> heatmap_blob = net_copy[tid].person_net->blob_by_name("resized_map");
-    const boost::shared_ptr<caffe::Blob<float>> joints_blob = net_copy[tid].person_net->blob_by_name("joints");
+    const boost::shared_ptr<caffe::Blob<float>> heatmap_blob = net_copies[tid].person_net->blob_by_name("resized_map");
+    const boost::shared_ptr<caffe::Blob<float>> joints_blob = net_copies[tid].person_net->blob_by_name("joints");
 
-    caffe::NmsLayer<float> *nms_layer = (caffe::NmsLayer<float>*)net_copy[tid].person_net->layer_by_name("nms").get();
+    caffe::NmsLayer<float> *nms_layer = (caffe::NmsLayer<float>*)net_copies[tid].person_net->layer_by_name("nms").get();
 
     //while(!empty) {
     while(1) {
-        if (global.quit_threads) break;
+        if (global.quit_threads)
+            break;
 
         //LOG(ERROR) << "start";
         int valid_data = 0;
@@ -1166,17 +1143,17 @@ void* processFrame(void *i) {
                     delete [] frame.data_for_wrap;
                     //n--;
 
-                    const std::lock_guard<std::mutex> lock{global.mtx};
+                    const std::lock_guard<std::mutex> lock{global.mutex};
                     global.dropped_index.push(frame.index);
                     continue;
                 }
                 //double tic1  = get_wall_time();
 
-                cudaMemcpy(net_copy[tid].canvas, frame.data_for_mat, RESOLUTION_WIDTH * RESOLUTION_HEIGHT * 3 * sizeof(float), cudaMemcpyHostToDevice);
+                cudaMemcpy(net_copies[tid].canvas, frame.data_for_mat, RESOLUTION_WIDTH * RESOLUTION_HEIGHT * 3 * sizeof(float), cudaMemcpyHostToDevice);
 
                 frame_batch[0] = frame;
                 //LOG(ERROR)<< "Copy data " << index_array[n] << " to device " << tid << ", now size " << global.input_queue.size();
-                float* pointer = net_copy[tid].person_net->blobs()[0]->mutable_gpu_data();
+                float* pointer = net_copies[tid].person_net->blobs()[0]->mutable_gpu_data();
 
                 cudaMemcpy(pointer + 0 * offset, frame_batch[0].data, BATCH_SIZE * offset * sizeof(float), cudaMemcpyHostToDevice);
                 valid_data++;
@@ -1192,13 +1169,13 @@ void* processFrame(void *i) {
 
         if (global.uistate.select_stage>=0) {
             caffe::SwitchLayer<float> *layer_ptr =
-                (caffe::SwitchLayer<float>*)net_copy[tid].person_net->layer_by_name("Switch_L1").get();
+                (caffe::SwitchLayer<float>*)net_copies[tid].person_net->layer_by_name("Switch_L1").get();
                 if (layer_ptr!=NULL) {
                     LOG(INFO) << "Selecting stage " << global.uistate.select_stage;
                     layer_ptr->SelectSwitch(global.uistate.select_stage);
                     layer_ptr->switch_select_ = global.uistate.select_stage;
                 }
-                (caffe::SwitchLayer<float>*)net_copy[tid].person_net->layer_by_name("Switch_L2").get();
+                (caffe::SwitchLayer<float>*)net_copies[tid].person_net->layer_by_name("Switch_L2").get();
                 if (layer_ptr!=NULL) {
                     LOG(INFO) << "Selecting stage " << global.uistate.select_stage;
                     layer_ptr->SelectSwitch(global.uistate.select_stage);
@@ -1207,7 +1184,7 @@ void* processFrame(void *i) {
         }
 
         nms_layer->SetThreshold(global.nms_threshold);
-        net_copy[tid].person_net->ForwardFrom(0);
+        net_copies[tid].person_net->ForwardFrom(0);
         VLOG(2) << "CNN time " << (get_wall_time()-frame.gpu_fetched_time)*1000.0 << " ms.";
         //cudaDeviceSynchronize();
         float* heatmap_pointer = heatmap_blob->mutable_cpu_data();
@@ -1216,25 +1193,25 @@ void* processFrame(void *i) {
         float joints[MAX_NUM_PARTS*3*MAX_PEOPLE]; //10*15*3
 
         int cnt = 0;
-        // CHECK_EQ(net_copy[tid].nms_num_parts, 15);
+        // CHECK_EQ(net_copies[tid].nms_num_parts, 15);
         double tic = get_wall_time();
-        const int num_parts = net_copy[tid].nms_num_parts;
-        if (net_copy[tid].nms_num_parts==15) {
+        const int num_parts = net_copies[tid].nms_num_parts;
+        if (net_copies[tid].nms_num_parts==15) {
             cnt = connectLimbs(subset, connection,
                                                  heatmap_pointer, peaks,
-                                                 net_copy[tid].nms_max_peaks, joints, net_copy[tid].model_descriptor);
+                                                 net_copies[tid].nms_max_peaks, joints, net_copies[tid].up_model_descriptor.get());
     } else {
             cnt = connectLimbsCOCO(subset, connection,
                                                  heatmap_pointer, peaks,
-                                                 net_copy[tid].nms_max_peaks, joints, net_copy[tid].model_descriptor);
+                                                 net_copies[tid].nms_max_peaks, joints, net_copies[tid].up_model_descriptor.get());
         }
 
         VLOG(2) << "CNT: " << cnt << " Connect time " << (get_wall_time()-tic)*1000.0 << " ms.";
-        net_copy[tid].num_people[0] = cnt;
+        net_copies[tid].num_people[0] = cnt;
         VLOG(2) << "num_people[i] = " << cnt;
 
 
-        cudaMemcpy(net_copy[tid].joints, joints,
+        cudaMemcpy(net_copies[tid].joints, joints,
             MAX_NUM_PARTS*3*MAX_PEOPLE * sizeof(float),
             cudaMemcpyHostToDevice);
 
@@ -1242,7 +1219,7 @@ void* processFrame(void *i) {
             //LOG(ERROR) << "Rendering";
             render(tid, heatmap_pointer); //only support batch size = 1!!!!
             for(int n = 0; n < valid_data; n++) {
-                frame_batch[n].numPeople = net_copy[tid].num_people[n];
+                frame_batch[n].numPeople = net_copies[tid].num_people[n];
                 frame_batch[n].gpu_computed_time = get_wall_time();
                 frame_batch[n].joints = boost::shared_ptr<float[]>(new float[frame_batch[n].numPeople*MAX_NUM_PARTS*3]);
                 for (int ij=0;ij<frame_batch[n].numPeople*num_parts*3;ij++) {
@@ -1250,7 +1227,7 @@ void* processFrame(void *i) {
                 }
 
 
-                cudaMemcpy(frame_batch[n].data_for_mat, net_copy[tid].canvas, RESOLUTION_HEIGHT * RESOLUTION_WIDTH * 3 * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(frame_batch[n].data_for_mat, net_copies[tid].canvas, RESOLUTION_HEIGHT * RESOLUTION_WIDTH * 3 * sizeof(float), cudaMemcpyDeviceToHost);
                 global.output_queue.push(frame_batch[n]);
             }
         }
@@ -1260,7 +1237,7 @@ void* processFrame(void *i) {
             for(int n = 0; n < valid_data; n++) {
                 frame_batch[n].numPeople = 0;
                 frame_batch[n].gpu_computed_time = get_wall_time();
-                cudaMemcpy(frame_batch[n].data_for_mat, net_copy[tid].canvas, RESOLUTION_HEIGHT * RESOLUTION_WIDTH * 3 * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(frame_batch[n].data_for_mat, net_copies[tid].canvas, RESOLUTION_HEIGHT * RESOLUTION_WIDTH * 3 * sizeof(float), cudaMemcpyDeviceToHost);
                 global.output_queue.push(frame_batch[n]);
             }
         }
@@ -1282,12 +1259,13 @@ void* buffer_and_order(void* threadargs) { //only one thread can execute this
 
     int frame_waited = 1;
     while(1) {
-        if (global.quit_threads) break;
+        if (global.quit_threads)
+            break;
         bool success = global.output_queue_mated.try_pop(&frame);
         frame.buffer_start_time = get_wall_time();
         if (success) {
             VLOG(4) << "buffer getting " << frame.index << ", waiting for " << frame_waited;
-            std::unique_lock<std::mutex> lock{global.mtx};
+            std::unique_lock<std::mutex> lock{global.mutex};
             while(global.dropped_index.size()!=0 && global.dropped_index.top() == frame_waited) {
                 frame_waited++;
                 global.dropped_index.pop();
@@ -1318,7 +1296,6 @@ void* buffer_and_order(void* threadargs) { //only one thread can execute this
                 //LOG(ERROR) << "popping " << get<0>(extra);
                 extra.buffer_end_time = get_wall_time();
                 global.output_queue_ordered.push(extra);
-                //printGlobal("buffer_and_order");
                 frame_waited = extra.index + 1;
                 while(buffer.size() != 0 && buffer.top().index == frame_waited) {
                     Frame next = buffer.top();
@@ -1341,7 +1318,8 @@ void* postProcessFrame(void *i) {
     Frame frame;
 
     while(1) {
-        if (global.quit_threads) break;
+        if (global.quit_threads)
+            break;
 
         frame = global.output_queue.pop();
         frame.postprocesse_begin_time = get_wall_time();
@@ -1372,7 +1350,8 @@ void* displayFrame(void *i) { //single thread
       float FPS = 0;
     char tmp_str[256];
     while(1) {
-        if (global.quit_threads) break;
+        if (global.quit_threads)
+            break;
 
         frame = global.output_queue_ordered.pop();
         double tic = get_wall_time();
@@ -1394,16 +1373,16 @@ void* displayFrame(void *i) { //single thread
             cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(150,150,255), 2);
         }
         if (global.part_to_show!=0) {
-            if (global.part_to_show-1<=model_descriptor->num_parts()) {
-                snprintf(tmp_str, 256, "%10s", model_descriptor->get_part_name(global.part_to_show-1).c_str());
+            if (global.part_to_show-1<=net_copies.at(0).up_model_descriptor->get_number_parts()) {
+                snprintf(tmp_str, 256, "%10s", net_copies.at(0).up_model_descriptor->get_part_name(global.part_to_show-1).c_str());
             } else {
-                int aff_part = ((global.part_to_show-1)-model_descriptor->num_parts()-1)*2;
+                int aff_part = ((global.part_to_show-1)-net_copies.at(0).up_model_descriptor->get_number_parts()-1)*2;
                 if (aff_part==0) {
                     snprintf(tmp_str, 256, "%10s", "PAFs");
                 } else {
                     aff_part = aff_part-2;
-                    aff_part += 1+model_descriptor->num_parts();
-                    std::string uvname = model_descriptor->get_part_name(aff_part);
+                    aff_part += 1+net_copies.at(0).up_model_descriptor->get_number_parts();
+                    std::string uvname = net_copies.at(0).up_model_descriptor->get_part_name(aff_part);
                     std::string conn = uvname.substr(0, uvname.find("("));
                     snprintf(tmp_str, 256, "%10s", conn.c_str());
                 }
@@ -1440,7 +1419,7 @@ void* displayFrame(void *i) { //single thread
 
         if (!FLAGS_write_json.empty()) {
             double scale = 1.0/frame.scale;
-            const int num_parts = model_descriptor->num_parts();
+            const int num_parts = net_copies.at(0).up_model_descriptor->get_number_parts();
             char fname[256];
             if (FLAGS_image_dir.empty()) {
                 sprintf(fname, "%s/frame%06d.json", FLAGS_write_json.c_str(), frame.video_frame_number);
@@ -1548,8 +1527,7 @@ int rtcpm() {
     int thread_pool_size = 1;
     pthread_t threads_pool[thread_pool_size];
     for(int i = 0; i < thread_pool_size; i++) {
-        int *arg = new int[1];
-        *arg = i;
+        int *arg = new int[i];
         int rc = pthread_create(&threads_pool[i], NULL, getFrameFromCam, (void *) arg);
         if (rc) {
             LOG(ERROR) << "Error: unable to create thread," << rc << "\n";
@@ -1562,8 +1540,7 @@ int rtcpm() {
     int thread_pool_size_out = NUM_GPU;
     pthread_t threads_pool_out[thread_pool_size_out];
     for(int i = 0; i < thread_pool_size_out; i++) {
-        int *arg = new int[1];
-        *arg = i;
+        int *arg = new int[i];
         int rc = pthread_create(&threads_pool_out[i], NULL, postProcessFrame, (void *) arg);
         if (rc) {
             LOG(ERROR) << "Error: unable to create thread," << rc << "\n";
@@ -1840,6 +1817,7 @@ int setGlobalParametersFromFlags() {
     SCALE_GAP = {FLAGS_scale_gap};
     START_SCALE = {FLAGS_start_scale};
     NUM_GPU = {FLAGS_num_gpu};
+    net_copies = std::vector<NetCopy>(NUM_GPU);
     // Set nets
     PERSON_DETECTOR_CAFFEMODEL = FLAGS_caffemodel;
     PERSON_DETECTOR_PROTO = FLAGS_caffeproto;

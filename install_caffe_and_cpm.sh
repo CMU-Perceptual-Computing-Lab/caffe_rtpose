@@ -3,6 +3,10 @@
 
 
 echo "------------------------- INSTALLING CAFFE AND CPM -------------------------"
+echo "NOTE: This script assumes that CUDA and cuDNN are already installed on your machine. Otherwise, it might fail."
+
+
+
 function exitIfError {
     if [[ $? -ne 0 ]] ; then
         echo ""
@@ -32,42 +36,49 @@ echo ""
 
 
 
-echo "------------------------- Installing CUDA -------------------------"
-# Basic
-sudo apt-get --assume-yes update
-sudo apt-get --assume-yes install build-essential
+echo "------------------------- Checking Number of Processors -------------------------"
+NUM_CORES=$(grep -c ^processor /proc/cpuinfo 2>/dev/null || sysctl -n hw.ncpu)
+echo "$NUM_CORES cores"
 exitIfError
-echo "------------------------- CUDA Installed -------------------------"
+echo "------------------------- Number of Processors Checked -------------------------"
 echo ""
 
 
 
-echo "------------------------- Installing Caffe -------------------------"
+echo "------------------------- Installing some Caffe Dependencies -------------------------"
+# Basic
+sudo apt-get --assume-yes update
+sudo apt-get --assume-yes install build-essential
+exitIfError
+echo "------------------------- Some Caffe Dependencies Installed -------------------------"
+echo ""
+
+
+
+echo "------------------------- Compiling Caffe & CPM -------------------------"
 if [[ $ubuntu_le_14 == true ]]; then
     cp Makefile.config.Ubuntu14.example Makefile.config
 else
     cp Makefile.config.Ubuntu16.example Makefile.config
 fi
-# Adjust Makefile.config (for example, if using Anaconda Python, or if cuDNN is desired)
-NUM_CORES=$(grep -c ^processor /proc/cpuinfo 2>/dev/null || sysctl -n hw.ncpu)
 make all -j$NUM_CORES
 # make test -j$NUM_CORES
 # make runtest -j$NUM_CORES
 exitIfError
-echo "------------------------- Caffe Installed -------------------------"
+echo "------------------------- Caffe & CPM Compiled -------------------------"
 echo ""
 
 
 
-echo "------------------------- Installing CPM -------------------------"
-echo "Compiled"
-exitIfError
-echo "------------------------- CPM Installed -------------------------"
-echo ""
+# echo "------------------------- Installing CPM -------------------------"
+# echo "Compiled"
+# exitIfError
+# echo "------------------------- CPM Installed -------------------------"
+# echo ""
 
 
 
-echo "------------------------- Downloading Models -------------------------"
+echo "------------------------- Downloading CPM Models -------------------------"
 models_folder="./model/"
 # COCO
 coco_folder="$models_folder"coco/""
@@ -84,11 +95,10 @@ if [ ! -f $mpi_model ]; then
 fi
 exitIfError
 echo "Models downloaded"
-echo "------------------------- Models Downloaded -------------------------"
+echo "------------------------- CPM Models Downloaded -------------------------"
 echo ""
 
 
 
 echo "------------------------- CAFFE AND CPM INSTALLED -------------------------"
 echo ""
-

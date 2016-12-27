@@ -4,7 +4,7 @@ Repo for the ECCV 2016 demo, "Realtime Multi­person Pose Estimation", Zhe Cao, 
 
 ## Quick Start
 1. Required: CUDA & cuDNN installed on your machine.
-2. Build `caffe` & `rtpose.bin` + download the caffe models (script tested on Ubuntu 14.04 & 16.04, it uses all the available cores in your machine):
+2. Build `caffe` & `rtpose.bin` + download the required caffe models (script tested on Ubuntu 14.04 & 16.04, it uses all the available cores in your machine):
 ```
 chmod u+x install_caffe_and_cpm.sh
 ./install_caffe_and_cpm.sh
@@ -15,7 +15,14 @@ chmod u+x install_caffe_and_cpm.sh
 ./build/examples/rtpose/rtpose.bin --video video_file.mp4
 ```
 
+## Running on your webcam:
+```
+./build/examples/rtpose/rtpose.bin
+```
+
 ## Important options:
+`--help` <--- It displays all the available options.
+
 `--video input.mp4` <--- Input video. If omitted, will use webcam.
 
 `--camera #` <--- Choose webcam number (default: 0).

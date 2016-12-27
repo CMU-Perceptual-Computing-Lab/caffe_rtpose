@@ -93,7 +93,7 @@ Please cite the paper in your publications if it helps your research:
     
     @article{cao2016realtime,
 	  title={Realtime Multi-Person 2D Pose Estimation using Part Affinity Fields},
-	  author={Cao, Zhe and Simon, Tomas and Wei, Shih-En and Sheikh, Yaser},
+	  author={Zhe Cao and Tomas Simon and Shih-En Wei and Yaser Sheikh},
 	  journal={arXiv preprint arXiv:1611.08050},
 	  year={2016}
 	  }

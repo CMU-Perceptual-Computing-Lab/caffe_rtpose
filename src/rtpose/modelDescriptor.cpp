@@ -20,35 +20,33 @@ std::map<int, std::string> createPartToName(const std::map<int, std::string> &pa
 }
 
 ModelDescriptor::ModelDescriptor(const std::map<int, std::string> &partToNameBaseLine,
-                                 const std::vector<int> &limbSequenceInit,
-                                 const std::vector<int> &mapIdxInit) :
-    partToName{createPartToName(partToNameBaseLine, limbSequenceInit, mapIdxInit)},
-    limbSequence{limbSequenceInit},
-    mapIdx{mapIdxInit},
-    numberParts{partToNameBaseLine.size() - 1}
+                                 const std::vector<int> &limbSequence,
+                                 const std::vector<int> &mapIdx) :
+    mPartToName{createPartToName(partToNameBaseLine, limbSequence, mapIdx)},
+    mLimbSequence{limbSequence},
+    mMapIdx{mapIdx},
+    mNumberParts{partToNameBaseLine.size() - 1}
 {
-    if (limbSequenceInit.size() != mapIdx.size())
-        throw std::runtime_error{std::string{"limbSequenceInit.size() should be equal to mapIdx.size()"}};
+    if (limbSequence.size() != mMapIdx.size())
+        throw std::runtime_error{std::string{"limbSequence.size() should be equal to mMapIdx.size()"}};
 }
 
-ModelDescriptor::~ModelDescriptor() {}
-
-int ModelDescriptor::get_number_parts() {
-    return numberParts;
+unsigned long ModelDescriptor::get_number_parts() {
+    return mNumberParts;
 }
 
 int ModelDescriptor::number_limb_sequence() {
-    return limbSequence.size() / 2;
+    return mLimbSequence.size() / 2;
 }
 
 const std::vector<int> &ModelDescriptor::get_limb_sequence() {
-    return limbSequence;
+    return mLimbSequence;
 }
 
 const std::vector<int> &ModelDescriptor::get_map_idx() {
-    return mapIdx;
+    return mMapIdx;
 }
 
-const std::string& ModelDescriptor::get_part_name(int n) {
-    return partToName.at(n);
+const std::string &ModelDescriptor::get_part_name(const int partIndex) {
+    return mPartToName.at(partIndex);
 }

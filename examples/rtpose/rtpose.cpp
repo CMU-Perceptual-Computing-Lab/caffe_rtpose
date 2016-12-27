@@ -156,10 +156,7 @@ std::vector<NetCopy> net_copies;
 
 int rtcpm();
 bool handleKey(int c);
-void putGaussianMaps(float* entry, cv::Point2f center, int stride, int grid_x, int grid_y, float sigma);
 void warmup(int);
-void dostuff(int); /* function prototype */
-void error(const char *msg);
 void process_and_pad_image(float* target, cv::Mat oriImg, int tw, int th, bool normalize);
 
 
@@ -1200,7 +1197,7 @@ void* processFrame(void *i) {
             cnt = connectLimbs(subset, connection,
                                                  heatmap_pointer, peaks,
                                                  net_copies[tid].nms_max_peaks, joints, net_copies[tid].up_model_descriptor.get());
-    } else {
+        } else {
             cnt = connectLimbsCOCO(subset, connection,
                                                  heatmap_pointer, peaks,
                                                  net_copies[tid].nms_max_peaks, joints, net_copies[tid].up_model_descriptor.get());
@@ -1584,59 +1581,6 @@ int rtcpm() {
     return 0;
 }
 
-void putGaussianMaps(float* entry, cv::Point2f center, int stride, int grid_x, int grid_y, float sigma) {
-  //LOG(INFO) << "putGaussianMaps here we start for " << center.x << " " << center.y;
-  float start = stride/2.0 - 0.5; //0 if stride = 1, 0.5 if stride = 2, 1.5 if stride = 4, ...
-  for (int g_y = 0; g_y < grid_y; g_y++) {
-    for (int g_x = 0; g_x < grid_x; g_x++) {
-      float x = start + g_x * stride;
-      float y = start + g_y * stride;
-      float d2 = (x-center.x)*(x-center.x) + (y-center.y)*(y-center.y);
-      float exponent = d2 / 2.0 / sigma / sigma;
-      if (exponent > 4.6052) { //ln(100) = -ln(1%)
-        continue;
-      }
-      entry[g_y*grid_x + g_x] += exp(-exponent);
-      if (entry[g_y*grid_x + g_x] > 1)
-        entry[g_y*grid_x + g_x] = 1;
-    }
-  }
-}
-
-void dostuff (int sock) {
-    /******** DOSTUFF() *********************
-    There is a separate instance of this function
-    for each connection.  It handles all communication
-    once a connnection has been established.
-    *****************************************/
-    int n;
-    char buffer[256];
-
-    bzero(buffer,256);
-    n = read(sock,buffer,255);
-    if (n < 0) error("ERROR reading from socket");
-    printf("Here is the message from client: %s\n", buffer);
-
-    std::string filename(buffer);
-    int status = rtcpm();
-    //int status = 0;
-    if (status == 0) {
-        char msg[] = "You image is processed";
-        n = write(sock, msg, strlen(msg));
-        if (n < 0) LOG(ERROR) << "Error when writing to socket";
-    }
-    else {
-        char msg[] = "Have problems processing your image";
-        n = write(sock, msg, strlen(msg));
-        if (n < 0) LOG(ERROR) << "Error when writing to socket";
-    }
-}
-
-void error(const char *msg) {
-    perror(msg);
-    exit(1);
-}
-
 bool handleKey(int c) {
     const std::string key2part = "0123456789qwertyuiopas";
     const std::string key2stage = "zxcvbn";
@@ -1812,11 +1756,12 @@ int setGlobalParametersFromFlags() {
         }
     }
 
-    global.part_to_show = FLAGS_part_to_show;
     BATCH_SIZE = {FLAGS_num_scales};
     SCALE_GAP = {FLAGS_scale_gap};
     START_SCALE = {FLAGS_start_scale};
     NUM_GPU = {FLAGS_num_gpu};
+    // Global struct/classes
+    global.part_to_show = FLAGS_part_to_show;
     net_copies = std::vector<NetCopy>(NUM_GPU);
     // Set nets
     PERSON_DETECTOR_CAFFEMODEL = FLAGS_caffemodel;
@@ -1825,7 +1770,7 @@ int setGlobalParametersFromFlags() {
     return 0;
 }
 
-int readFramesSource()
+int readImageDirIfFlagEnabled()
 {
     // Open & read image dir if present
     if (!FLAGS_image_dir.empty()) {
@@ -1853,19 +1798,24 @@ int readFramesSource()
 int main(int argc, char *argv[]) {
     // Initializing google logging (Caffe uses it as its logging module)
     google::InitGoogleLogging("rtcpm");
+
     // Parsing command line flags
     gflags::ParseCommandLineFlags(&argc, &argv, true);
+
     // Applying user defined configuration and/or default parameter values to global parameters
     auto return_value = setGlobalParametersFromFlags();
-    if (return_value == 0)
-    {
-        // Configure frames source
-        return_value = readFramesSource();
-        if (return_value == 0)
-        {
-            // Running rtcpm
-            return_value = rtcpm();
-        }
-    }
+    if (return_value != 0)
+        return return_value;
+
+    // Configure frames source
+    return_value = readImageDirIfFlagEnabled();
+    if (return_value != 0)
+        return return_value;
+
+    // Running rtcpm
+    return_value = rtcpm();
+    if (return_value != 0)
+        return return_value;
+
     return return_value;
 }

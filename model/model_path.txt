@@ -1,2 +1,0 @@
-/media/posenas1b/Users/zhe/arch/MPI_exp_caffe/pose43/exp04/model/pose_iter_264000.caffemodel
-cubeserver1:/home/zhe/Real-time-CPM-for-multiple-people/model/pose_iter_166000.caffemodel

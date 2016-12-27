@@ -3,15 +3,11 @@ Realtime Multiperson Pose Estimation
 Repo for the ECCV 2016 demo, "Realtime Multi­person Pose Estimation", Zhe Cao, Shih-En Wei, Tomas Simon, Yaser Sheikh.
 
 ## Quick Start
-1. See `model/getModels.sh` for caffe model downloads
-2. Build `caffe` & `rtpose.bin`:
+1. Required: CUDA & cuDNN installed on your machine.
+2. Build `caffe` & `rtpose.bin` + download the caffe models (script tested on Ubuntu 14.04 & 16.04, it uses all the available cores in your machine):
 ```
-cd caffe_demo; make all
-```
-
-## Running with a webcam:
-```
-./build/examples/rtpose/rtpose.bin
+chmod u+x install_caffe_and_cpm.sh
+./install_caffe_and_cpm.sh
 ```
 
 ## Running on a video:
@@ -65,7 +61,7 @@ Each JSON file has a `bodies` array of objects, where each object has an array `
 }
 ```
 
-where the joint order of the COCO parts is: (see examples/rtpose/modeldesc.h )
+where the joint order of the COCO parts is: (see src/rtpose/modelDescriptorFactory.cpp )
 ```
 	part2name {
 		{0,  "Nose"},

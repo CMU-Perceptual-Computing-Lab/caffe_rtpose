@@ -22,9 +22,9 @@ public:
 
     /**
        * Getter function which returns the number of parts of the model (e.g. 15 for MPI_15, 18 for COCO_18, etc.).
-       * @return An unsigned long with a copy of mNumberParts.
+       * @return An int with a copy of mNumberParts.
        */
-    unsigned long get_number_parts();
+    int get_number_parts();
 
     /**
        * This function returns the number of limbs in the model.
@@ -55,7 +55,7 @@ private:
     const std::map<int, std::string> mPartToName;
     const std::vector<int> mLimbSequence;
     const std::vector<int> mMapIdx;
-    const unsigned long mNumberParts;
+    const int mNumberParts;
 };
 
 #endif // MODEL_DESCRIPTOR_H

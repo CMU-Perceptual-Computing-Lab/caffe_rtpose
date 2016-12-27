@@ -25,13 +25,13 @@ ModelDescriptor::ModelDescriptor(const std::map<int, std::string> &partToNameBas
     mPartToName{createPartToName(partToNameBaseLine, limbSequence, mapIdx)},
     mLimbSequence{limbSequence},
     mMapIdx{mapIdx},
-    mNumberParts{partToNameBaseLine.size() - 1}
+    mNumberParts{(int)partToNameBaseLine.size() - 1}
 {
     if (limbSequence.size() != mMapIdx.size())
         throw std::runtime_error{std::string{"limbSequence.size() should be equal to mMapIdx.size()"}};
 }
 
-unsigned long ModelDescriptor::get_number_parts() {
+int ModelDescriptor::get_number_parts() {
     return mNumberParts;
 }
 

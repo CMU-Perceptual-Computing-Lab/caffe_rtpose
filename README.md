@@ -1,8 +1,8 @@
 Realtime Multiperson Pose Estimation
 ====================================
-Repo (C++) for the ECCV 2016 demo, "Realtime Multiperson Pose Estimation", Zhe Cao, Shih-En Wei, Tomas Simon, Yaser Sheikh.
+C++ code repo for the ECCV 2016 demo, "Realtime Multiperson Pose Estimation", Zhe Cao, Shih-En Wei, Tomas Simon, Yaser Sheikh.
 
-The full repo including matlab and python version, and training code: https://github.com/ZheC/Multi-Person-Pose-Estimation
+The [full project repo](https://github.com/ZheC/Multi-Person-Pose-Estimation) includes matlab and python version, and training code.
 
 ## Quick Start
 1. Required: CUDA & cuDNN installed on your machine.

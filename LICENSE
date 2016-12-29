@@ -1,4 +1,9 @@
-                    GNU GENERAL PUBLIC LICENSE
+Third part software copyright is shown in the bottom.
+All new contributions compared to the original branch is under the GPL V3 License.
+All rights reserved.
+
+
+                      GNU GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
 
  Copyright (C) 2007 Free Software Foundation, Inc. <http://fsf.org/>
@@ -678,7 +683,7 @@ Public License instead of this License.  But first, please read
 
 THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
 
-This project, Faster R-CNN, incorporates material from the project(s) listed below (collectively, "Third Party Code").  Microsoft is not the original author of the Third Party Code.  The original copyright notice and license under which Microsoft received such Third Party Code are set out below. This Third Party Code is licensed to you under their original license terms set forth below.  Microsoft reserves all other rights not expressly granted, whether by implication, estoppel or otherwise.
+This project incorporates material from the project(s) listed below (collectively, "Third Party Code").  This Third Party Code is licensed to you under their original license terms set forth below.  We reserves all other rights not expressly granted, whether by implication, estoppel or otherwise.
  
 1.	Caffe, version 0.9, (https://github.com/BVLC/caffe/)
 

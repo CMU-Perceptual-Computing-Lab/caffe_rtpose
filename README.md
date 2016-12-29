@@ -4,6 +4,8 @@ C++ code repo for the ECCV 2016 demo, "Realtime Multiperson Pose Estimation", Zh
 
 The [full project repo](https://github.com/ZheC/Multi-Person-Pose-Estimation) includes matlab and python version, and training code.
 
+This project is licensed under the terms of the GPL v3 license [![License](https://img.shields.io/aur/license/yaourt.svg)](LICENSE).
+
 ## Quick Start
 1. Required: CUDA & cuDNN installed on your machine.
 2. Build `caffe` & `rtpose.bin` + download the required caffe models (script tested on Ubuntu 14.04 & 16.04, it uses all the available cores in your machine):

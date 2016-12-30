@@ -1,5 +1,5 @@
 #include "rtpose/modelDescriptor.h"
-#include <exception>
+#include <stdexcept>
 
 std::map<int, std::string> createPartToName(const std::map<int, std::string> &partToNameBaseLine,
                                             const std::vector<int> &limbSequence,

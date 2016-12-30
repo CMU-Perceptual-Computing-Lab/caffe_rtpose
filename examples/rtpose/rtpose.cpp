@@ -1521,6 +1521,7 @@ int rtcpm() {
     }
 
     // Openning frames producer (e.g. video, webcam) threads
+    usleep(3 * 1e6);
     int thread_pool_size = 1;
     pthread_t threads_pool[thread_pool_size];
     for(int i = 0; i < thread_pool_size; i++) {

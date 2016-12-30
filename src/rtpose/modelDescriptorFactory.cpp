@@ -1,5 +1,5 @@
 #include "rtpose/modelDescriptorFactory.h"
-#include <exception>
+#include <stdexcept>
 
 const void ModelDescriptorFactory::createModelDescriptor(const ModelDescriptorFactory::Type type, std::unique_ptr<ModelDescriptor> &modelDescriptorUniquePtr)
 {

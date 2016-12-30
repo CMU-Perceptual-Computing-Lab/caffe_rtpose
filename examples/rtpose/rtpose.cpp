@@ -86,7 +86,6 @@ const auto MAX_PEOPLE = RENDER_MAX_PEOPLE;  // defined in render_functions.hpp
 const auto BOX_SIZE = 368;
 const auto BUFFER_SIZE = 4;    //affects latency
 const auto MAX_NUM_PARTS = 70;
-double ORIGIN_INIT_SCALE = 1.0;
 
 
 // global queues for I/O
@@ -211,7 +210,7 @@ void warmup(int device_id) {
 
     if (net_copies[device_id].nms_num_parts==15) {
         ModelDescriptorFactory::createModelDescriptor(ModelDescriptorFactory::Type::MPI_15, net_copies[device_id].up_model_descriptor);
-        global.nms_threshold = nms_layer->GetThreshold();
+        global.nms_threshold = 0.2;
         global.connect_min_subset_cnt = 3;
         global.connect_min_subset_score = 0.4;
         global.connect_inter_threshold = 0.01;
@@ -363,9 +362,6 @@ void* getFrameFromDir(void *i) {
             CHECK_LE(target_width, NET_RESOLUTION_WIDTH);
             CHECK_LE(target_height, NET_RESOLUTION_HEIGHT);
 
-            if (i==0) {
-                ORIGIN_INIT_SCALE = image_uchar.rows/(double)target_width;
-            }
             resize(image_uchar, image_temp, cv::Size(target_width, target_height), 0, 0, CV_INTER_AREA);
             process_and_pad_image(frame.data + i * offset, image_temp, NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT, 1);
         }
@@ -508,18 +504,6 @@ void* getFrameFromCam(void *i) {
         int target_width;
         int target_height;
         cv::Mat image_temp;
-        VLOG(4) << "NET_RESOLUTION_WIDTH/HEIGHT: " << NET_RESOLUTION_WIDTH << " x " << NET_RESOLUTION_HEIGHT;
-        VLOG(4) << "RESOLUTION_WIDTH/height: " << RESOLUTION_WIDTH << " x " << RESOLUTION_HEIGHT;
-        int start_width = NET_RESOLUTION_WIDTH;
-        int start_height = NET_RESOLUTION_HEIGHT;
-        if (NET_RESOLUTION_WIDTH/(double)RESOLUTION_WIDTH < NET_RESOLUTION_HEIGHT/(double)RESOLUTION_HEIGHT) {
-            start_width = NET_RESOLUTION_WIDTH;
-            start_height = RESOLUTION_HEIGHT * NET_RESOLUTION_WIDTH/(double)RESOLUTION_WIDTH;
-        }  else {
-            start_width = RESOLUTION_WIDTH * NET_RESOLUTION_HEIGHT/(double)RESOLUTION_HEIGHT;
-            start_height = NET_RESOLUTION_HEIGHT;
-        }
-        VLOG(4) << "start_width/height: " << start_width << " x " << start_height;
         for(int i=0; i < BATCH_SIZE; i++) {
             float scale = START_SCALE - i*SCALE_GAP;
             target_width = 16 * ceil(NET_RESOLUTION_WIDTH * scale /16);
@@ -528,14 +512,7 @@ void* getFrameFromCam(void *i) {
             CHECK_LE(target_width, NET_RESOLUTION_WIDTH);
             CHECK_LE(target_height, NET_RESOLUTION_HEIGHT);
 
-            int im_target_w = floor(start_width*target_width/NET_RESOLUTION_WIDTH);
-            int im_target_h = floor(start_height*target_width/NET_RESOLUTION_WIDTH);
-  
-            VLOG(4) << "im_target_w/h: " << im_target_w << " x " << im_target_h;
-            if (i==0) {
-                ORIGIN_INIT_SCALE = image_uchar.rows/(double)im_target_w;
-            }
-            cv::resize(image_uchar, image_temp, cv::Size(im_target_w, im_target_h), 0, 0, CV_INTER_AREA);
+            cv::resize(image_uchar, image_temp, cv::Size(target_width, target_height), 0, 0, CV_INTER_AREA);
             process_and_pad_image(frame.data + i * offset, image_temp, NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT, 1);
         }
         frame.commit_time = get_wall_time();
@@ -755,8 +732,8 @@ int connectLimbs(
                 int idx = int(subset[i][j]);
                 if (idx) {
                     joints[cnt*num_parts*3 + j*3 +2] = peaks[idx];
-                    joints[cnt*num_parts*3 + j*3 +1] = peaks[idx-1] * ORIGIN_INIT_SCALE;
-                    joints[cnt*num_parts*3 + j*3] = peaks[idx-2] * ORIGIN_INIT_SCALE;
+                    joints[cnt*num_parts*3 + j*3 +1] = peaks[idx-1] * RESOLUTION_HEIGHT/ (float)NET_RESOLUTION_HEIGHT;
+                    joints[cnt*num_parts*3 + j*3] = peaks[idx-2] * RESOLUTION_WIDTH/ (float)NET_RESOLUTION_WIDTH;
                 }
                 else{
                     joints[cnt*num_parts*3 + j*3 +2] = 0;
@@ -1738,7 +1715,7 @@ int setGlobalParametersFromFlags() {
     nRead = sscanf(FLAGS_net_resolution.c_str(), "%dx%d", &NET_RESOLUTION_WIDTH, &NET_RESOLUTION_HEIGHT);
     CHECK_EQ(nRead,2) << "Error, net resolution format (" <<  FLAGS_net_resolution << ") invalid, should be e.g., 656x368 (multiples of 16)";
     LOG(INFO) << "Net resolution: " << NET_RESOLUTION_WIDTH << "x" << NET_RESOLUTION_HEIGHT;
-  
+
     if (!FLAGS_write_frames.empty()) {
         // Create folder if it does not exist
         boost::filesystem::path dir(FLAGS_write_frames);

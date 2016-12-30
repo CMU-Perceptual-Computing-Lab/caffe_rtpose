@@ -1481,7 +1481,7 @@ int rtcpm() {
             return -1;
         }
     }
-    LOG(ERROR) << "Finish spawning " << NUM_GPU << " threads. now waiting." << "\n";
+    LOG(INFO) << "Finish spawning " << NUM_GPU << " threads." << "\n";
 
     // Setting output resolution
     if (!FLAGS_no_display) {

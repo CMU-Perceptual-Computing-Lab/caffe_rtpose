@@ -28,21 +28,21 @@
 #include <opencv2/contrib/contrib.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
-#include "caffe/blob.hpp"
-#include "caffe/common.hpp"
 #include "caffe/layers/imresize_layer.hpp"
 #include "caffe/layers/nms_layer.hpp"
-#include "caffe/layers/switch_layer.hpp"
 #include "caffe/net.hpp"
-#include "caffe/proto/caffe.pb.h"
-#include "caffe/util/db.hpp"
-#include "caffe/util/io.hpp"
-#include "caffe/util/benchmark.hpp"
 #include "caffe/util/blocking_queue.hpp"
-#include "caffe/util/render_functions.hpp"
+// #include "caffe/util/render_functions.hpp"
+// #include "caffe/blob.hpp"
+// #include "caffe/common.hpp"
+// #include "caffe/proto/caffe.pb.h"
+// #include "caffe/util/db.hpp"
+// #include "caffe/util/io.hpp"
+// #include "caffe/util/benchmark.hpp"
 
 #include "rtpose/modelDescriptor.h"
 #include "rtpose/modelDescriptorFactory.h"
+#include "rtpose/renderFunctions.h"
 
 // Flags (rtpose.bin --help)
 DEFINE_bool(fullscreen,             false,          "Run in fullscreen mode (press f during runtime to toggle)");
@@ -114,7 +114,6 @@ struct Global {
             is_googly_eyes(0),
             current_frame(0),
             seek_to_frame(-1),
-            select_stage(-1),
             fps(0) {}
         bool is_fullscreen;
         bool is_video_paused;
@@ -122,7 +121,6 @@ struct Global {
         bool is_googly_eyes;
         int current_frame;
         int seek_to_frame;
-        int select_stage;
         double fps;
     };
     UIState uistate;
@@ -273,11 +271,11 @@ void render(int gid, float *heatmaps /*GPU*/) {
 
     double tic = get_wall_time();
     if (net_copies[gid].up_model_descriptor->get_number_parts()==15) {
-        caffe::render_mpi_parts(net_copies[gid].canvas, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT,
+        render_mpi_parts(net_copies[gid].canvas, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT,
         heatmaps, BOX_SIZE, centers, poses, net_copies[gid].num_people, global.part_to_show);
     } else if (net_copies[gid].up_model_descriptor->get_number_parts()==18) {
         if (global.part_to_show-1<=net_copies[gid].up_model_descriptor->get_number_parts()) {
-            caffe::render_coco_parts(net_copies[gid].canvas,
+            render_coco_parts(net_copies[gid].canvas,
             RESOLUTION_WIDTH, RESOLUTION_HEIGHT,
             NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT,
             heatmaps, BOX_SIZE, centers, poses,
@@ -291,7 +289,7 @@ void render(int gid, float *heatmaps /*GPU*/) {
                 aff_part = aff_part-2;
                 }
                 aff_part += 1+net_copies[gid].up_model_descriptor->get_number_parts();
-                caffe::render_coco_aff(net_copies[gid].canvas, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT,
+                render_coco_aff(net_copies[gid].canvas, RESOLUTION_WIDTH, RESOLUTION_HEIGHT, NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT,
                 heatmaps, BOX_SIZE, centers, poses, net_copies[gid].num_people, aff_part, num_parts_accum);
         }
     }
@@ -1141,22 +1139,6 @@ void* processFrame(void *i) {
         if (valid_data == 0)
             continue;
 
-        if (global.uistate.select_stage>=0) {
-            caffe::SwitchLayer<float> *layer_ptr =
-                (caffe::SwitchLayer<float>*)net_copies[tid].person_net->layer_by_name("Switch_L1").get();
-                if (layer_ptr!=NULL) {
-                    LOG(INFO) << "Selecting stage " << global.uistate.select_stage;
-                    layer_ptr->SelectSwitch(global.uistate.select_stage);
-                    layer_ptr->switch_select_ = global.uistate.select_stage;
-                }
-                (caffe::SwitchLayer<float>*)net_copies[tid].person_net->layer_by_name("Switch_L2").get();
-                if (layer_ptr!=NULL) {
-                    LOG(INFO) << "Selecting stage " << global.uistate.select_stage;
-                    layer_ptr->SelectSwitch(global.uistate.select_stage);
-                    layer_ptr->switch_select_ = global.uistate.select_stage;
-                }
-        }
-
         nms_layer->SetThreshold(global.nms_threshold);
         net_copies[tid].person_net->ForwardFrom(0);
         VLOG(2) << "CNN time " << (get_wall_time()-frame.gpu_fetched_time)*1000.0 << " ms.";
@@ -1561,7 +1543,6 @@ int rtcpm() {
 
 bool handleKey(int c) {
     const std::string key2part = "0123456789qwertyuiopas";
-    const std::string key2stage = "zxcvbn";
     VLOG(4) << "key: " << (char)c << " code: " << c;
     if (c>=65505) {
         global.uistate.is_shift_down = true;
@@ -1677,13 +1658,6 @@ bool handleKey(int c) {
             global.part_to_show = 0;
         }
         LOG(INFO) << "p2s: " << global.part_to_show;
-    }
-
-    int stage = -1;
-    ind = key2stage.find(c);
-    if (ind!=std::string::npos) {
-        stage = ind;
-        global.uistate.select_stage = stage;
     }
 
     return true;

@@ -1,13 +1,5 @@
-#include <math_functions.h>  // CUDA's, not caffe's, for fabs, signbit
-#include <thrust/device_vector.h>
-#include <thrust/functional.h>  // thrust::plus
-#include <thrust/reduce.h>
-
-#include <cmath>
-
-#include "caffe/common.hpp"
-#include "caffe/util/math_functions.hpp"
-#include "caffe/util/render_functions.hpp"
+#include "rtpose/renderFunctions.h"
+#include "caffe/util/math_functions.hpp"  // caffe::updiv
 
 #define numThreadsPerBlock_1d 32
 #define numThreadsPerBlock 1024
@@ -16,8 +8,6 @@
 #define LIMB_COCO {1,2, 1,5, 2,3, 3,4, 5,6, 6,7, 1,8, 8,9, 9,10, 1,11, 11,12, 12,13, 1,0, 0,14, 14,16, 0,15, 15,17, 2,16, 5,17}
 #define LIMB_COCO_NOEAR {1,2, 1,5, 2,3, 3,4, 5,6, 6,7, 1,8, 8,9, 9,10, 1,11, 11,12, 12,13, 1,0, 0,14, 14,16, 0,15, 15,17}
 //#define LIMB_COCO_NOEAR {1,2, 1,5, 2,3, 3,4, 5,6, 6,7, 1,8, 8,9, 9,10, 1,11, 11,12, 12,13, 1,15, 14,15, 14,16, 15,17, 0,15}
-namespace caffe {
-
 
 inline __device__ void getColor(float* c, float v, float vmin, float vmax)
 {
@@ -339,7 +329,7 @@ __global__ void render_pose_29parts_heatmap(float* dst_pointer, int w_canvas, in
 }
 
 void render_mpi_parts(float* canvas, int w_canvas, int h_canvas, int w_net, int h_net,
-                    float* heatmaps, int boxsize, float* centers, float* poses, vector<int> num_people, int part){
+                    float* heatmaps, int boxsize, float* centers, float* poses, std::vector<int> num_people, int part){
   //canvas, image    in width * height * 3 * N
   //heatmaps         in w_net * h_net * 15 * (P1+P2+...+PN)
   //centers          in 2 * 11 * 1 * N
@@ -359,7 +349,7 @@ void render_mpi_parts(float* canvas, int w_canvas, int h_canvas, int w_net, int 
   float ratio_to_origin = (float)h_canvas / (float)h_net;
 
   dim3 threadsPerBlock(numThreadsPerBlock_1d, numThreadsPerBlock_1d);
-  dim3 numBlocks(updiv(w_canvas, threadsPerBlock.x), updiv(h_canvas, threadsPerBlock.y));
+  dim3 numBlocks(caffe::updiv(w_canvas, threadsPerBlock.x), caffe::updiv(h_canvas, threadsPerBlock.y));
 
   for(int i = 0; i < N; i++){ //N is always 1 for website
     int num_people_this_frame = num_people[i];
@@ -986,7 +976,7 @@ __global__ void render_pose_coco_affinity(float* dst_pointer, int w_canvas, int 
 
 
 void render_coco_parts(float* canvas, int w_canvas, int h_canvas, int w_net, int h_net,
-                    float* heatmaps, int boxsize, float* centers, float* poses, vector<int> num_people, int part, bool googly_eyes){
+                    float* heatmaps, int boxsize, float* centers, float* poses, std::vector<int> num_people, int part, bool googly_eyes){
   //canvas, image    in width * height * 3 * N
   //heatmaps         in w_net * h_net * 15 * (P1+P2+...+PN)
   //centers          in 2 * 11 * 1 * N
@@ -1006,7 +996,7 @@ void render_coco_parts(float* canvas, int w_canvas, int h_canvas, int w_net, int
   float ratio_to_origin = (float)h_canvas / (float)h_net;
 
   dim3 threadsPerBlock(numThreadsPerBlock_1d, numThreadsPerBlock_1d);
-  dim3 numBlocks(updiv(w_canvas, threadsPerBlock.x), updiv(h_canvas, threadsPerBlock.y));
+  dim3 numBlocks(caffe::updiv(w_canvas, threadsPerBlock.x), caffe::updiv(h_canvas, threadsPerBlock.y));
 
   for(int i = 0; i < N; i++){ //N is always 1 for website
     int num_people_this_frame = num_people[i];
@@ -1047,7 +1037,7 @@ void render_coco_parts(float* canvas, int w_canvas, int h_canvas, int w_net, int
 
 void render_coco_aff(float* canvas, int w_canvas, int h_canvas, int w_net, int h_net,
                     float* heatmaps, int boxsize, float* centers, float* poses,
-                    vector<int> num_people, int part, int num_parts_accum){
+                    std::vector<int> num_people, int part, int num_parts_accum){
   //canvas, image    in width * height * 3 * N
   //heatmaps         in w_net * h_net * 15 * (P1+P2+...+PN)
   //centers          in 2 * 11 * 1 * N
@@ -1067,7 +1057,7 @@ void render_coco_aff(float* canvas, int w_canvas, int h_canvas, int w_net, int h
   //float ratio_to_origin = (float)h_canvas / (float)h_net;
 
   dim3 threadsPerBlock(numThreadsPerBlock_1d, numThreadsPerBlock_1d);
-  dim3 numBlocks(updiv(w_canvas, threadsPerBlock.x), updiv(h_canvas, threadsPerBlock.y));
+  dim3 numBlocks(caffe::updiv(w_canvas, threadsPerBlock.x), caffe::updiv(h_canvas, threadsPerBlock.y));
 
   for(int i = 0; i < N; i++){ //N is always 1 for website
     int num_people_this_frame = num_people[i];
@@ -1088,5 +1078,3 @@ void render_coco_aff(float* canvas, int w_canvas, int h_canvas, int w_net, int h
   //
   //LOG(ERROR) << "render_done";
 }
-
-}  // namespace caffe

@@ -4,20 +4,6 @@ input_dim: 3
 input_dim: 376
 input_dim: 656
 layer {
-  name: "render_space"
-  type: "Render"
-  bottom: "image"
-  top: "render_space"
-  render_param {
-    num_output: 3 # 3 * images
-  }
-}
-layer {
-  name: "silence"
-  type: "Silence"
-  bottom: "render_space"
-}
-layer {
   name: "conv1_1"
   type: "Convolution"
   bottom: "image"

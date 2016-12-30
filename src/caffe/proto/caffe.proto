@@ -406,10 +406,10 @@ message LayerParameter {
   optional CPMDataParameter cpmdata_param = 147;
   optional ImResizeParameter imresize_param = 148;
   optional NmsParameter nms_param = 149;
-  optional RenderParameter render_param = 150;
+  // optional RenderParameter render_param = 150;
   optional CocoDataParameter cocodata_param = 151;
   optional CPMBottomUpDataParameter cpmbottomup_param = 152;
-  optional SwitchParameter switch_param = 153;
+  // optional SwitchParameter switch_param = 153;
 }
 
 message CPMDataParameter {
@@ -575,13 +575,13 @@ message TransformationParameter {
   optional bool per_part_scale = 44 [default = false];
 }
 
-message RenderParameter {
-  optional uint32 num_output = 1 [default = 3];
-}
+// message RenderParameter {
+//   optional uint32 num_output = 1 [default = 3];
+// }
 
-message SwitchParameter {
-  optional uint32 num_output = 1 [default = 3];
-}
+// message SwitchParameter {
+//   optional uint32 num_output = 1 [default = 3];
+// }
 
 message NmsParameter {
   optional float threshold = 1 [default = 0.5];

@@ -1,5 +1,5 @@
+#include "caffe/cpm/layers/nms_layer.hpp"
 #include <vector>
-#include "caffe/layers/nms_layer.hpp"
 
 using namespace std;
 
@@ -15,8 +15,8 @@ void NmsLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom, const vecto
 
 template <typename Dtype>
 void NmsLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top){
-	vector<int> bottom_shape = bottom[0]->shape();
-	vector<int> top_shape(bottom_shape);
+	std::vector<int> bottom_shape = bottom[0]->shape();
+	std::vector<int> top_shape(bottom_shape);
 
 	top_shape[3] = 3;  // X, Y, score
 	top_shape[2] = max_peaks_+1; // 10 people + 1
@@ -30,16 +30,16 @@ void NmsLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom, const vector<B
 
 template <typename Dtype>
 void NmsLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top){
-	int num = bottom[0]->shape(0);
-	//int channel = bottom[0]->shape(1);
+	const int num = bottom[0]->shape(0);
+	//const int channel = bottom[0]->shape(1);
 	//std::cout << "cpu here!" << std::endl;
-	int oriSpatialHeight = bottom[0]->shape(2);
-	int oriSpatialWidth = bottom[0]->shape(3);
+	const int oriSpatialHeight = bottom[0]->shape(2);
+	const int oriSpatialWidth = bottom[0]->shape(3);
 
 	Dtype* dst_pointer = top[0]->mutable_cpu_data();
-	Dtype* src_pointer = bottom[0]->mutable_cpu_data();
-	int offset2 = oriSpatialHeight * oriSpatialWidth;
-	int offset2_dst = (max_peaks_+1)*2;
+	const Dtype* const src_pointer = bottom[0]->cpu_data();
+	const int offset2 = oriSpatialHeight * oriSpatialWidth;
+	const int offset2_dst = (max_peaks_+1)*2;
 
 	//stupid method
 	for(int n = 0; n < num; n++){
@@ -48,12 +48,12 @@ void NmsLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom, const vect
 
 		for (int y = 0; y < oriSpatialHeight; y++){
 			for (int x = 0; x < oriSpatialWidth; x++){
-			    Dtype value = src_pointer[n * offset2 + y*oriSpatialWidth + x];
+			    const Dtype value = src_pointer[n * offset2 + y*oriSpatialWidth + x];
 			    if(value < threshold_) continue;
-			    Dtype top = (y == 0) ? 0 : src_pointer[n * offset2 + (y-1)*oriSpatialWidth + x];
-			    Dtype bottom = (y == oriSpatialHeight - 1) ? 0 : src_pointer[n * offset2 + (y+1)*oriSpatialWidth + x];
-			    Dtype left = (x == 0) ? 0 : src_pointer[n * offset2 + y*oriSpatialWidth + (x-1)];
-			    Dtype right = (x == oriSpatialWidth - 1) ? 0 : src_pointer[n * offset2 + y*oriSpatialWidth + (x+1)];
+			    const Dtype top = (y == 0) ? 0 : src_pointer[n * offset2 + (y-1)*oriSpatialWidth + x];
+			    const Dtype bottom = (y == oriSpatialHeight - 1) ? 0 : src_pointer[n * offset2 + (y+1)*oriSpatialWidth + x];
+			    const Dtype left = (x == 0) ? 0 : src_pointer[n * offset2 + y*oriSpatialWidth + (x-1)];
+			    const Dtype right = (x == oriSpatialWidth - 1) ? 0 : src_pointer[n * offset2 + y*oriSpatialWidth + (x+1)];
 			    if(value > top && value > bottom && value > left && value > right){
 			    	dst_pointer[n*offset2_dst + (peakCount + 1) * 2] = x;
 			    	dst_pointer[n*offset2_dst + (peakCount + 1) * 2 + 1] = y;

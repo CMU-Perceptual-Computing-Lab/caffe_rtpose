@@ -12,16 +12,6 @@
 
 namespace caffe {
 
-int updiv(int a, int b);
-void fill_pose_net(const float* image, int width, int height,
-                   float* dst, int boxsize,
-                   const float* peak_pointer_gpu, vector<int> num_people, int limit);
-
-void render_mpi_parts(float* canvas, int w_canvas, int h_canvas, int w_net, int h_net,
-                    float* heatmaps, int boxsize,
-                    float* centers, float* poses, vector<int> num_people, int part);
-
-
 // Caffe gemm provides a simpler interface to the gemm functions, with the
 // limitation that the data has to be contiguous in memory.
 template <typename Dtype>

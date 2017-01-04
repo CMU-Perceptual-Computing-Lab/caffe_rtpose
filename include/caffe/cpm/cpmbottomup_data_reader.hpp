@@ -1,5 +1,5 @@
-#ifndef CAFFE_CPMDATA_READER_HPP_
-#define CAFFE_CPMDATA_READER_HPP_
+#ifndef CAFFE_CPM_CPMBOTTOMUP_DATA_READER_HPP
+#define CAFFE_CPM_CPMBOTTOMUP_DATA_READER_HPP
 
 #include <map>
 #include <string>
@@ -20,10 +20,10 @@ namespace caffe {
  * subset of the database. Data is distributed to solvers in a round-robin
  * way to keep parallel training deterministic.
  */
-class CPMDataReader {
+class CPMBottomUpDataReader {
  public:
-  explicit CPMDataReader(const LayerParameter& param);
-  ~CPMDataReader();
+  explicit CPMBottomUpDataReader(const LayerParameter& param);
+  ~CPMBottomUpDataReader();
 
   inline BlockingQueue<Datum*>& free() const {
     return queue_pair_->free_;
@@ -58,7 +58,7 @@ class CPMDataReader {
     const LayerParameter param_;
     BlockingQueue<shared_ptr<QueuePair> > new_queue_pairs_;
 
-    friend class CPMDataReader;
+    friend class CPMBottomUpDataReader;
 
   DISABLE_COPY_AND_ASSIGN(Body);
   };
@@ -66,15 +66,15 @@ class CPMDataReader {
   // A source is uniquely identified by its layer name + path, in case
   // the same database is read from two different locations in the net.
   static inline string source_key(const LayerParameter& param) {
-    return param.name() + ":" + param.cpmdata_param().source();
+    return param.name() + ":" + param.cocodata_param().source();
   }
 
   const shared_ptr<QueuePair> queue_pair_;
   shared_ptr<Body> body_;
 
-  static map<const string, boost::weak_ptr<CPMDataReader::Body> > bodies_;
+  static map<const string, boost::weak_ptr<CPMBottomUpDataReader::Body> > bodies_;
 
-DISABLE_COPY_AND_ASSIGN(CPMDataReader);
+DISABLE_COPY_AND_ASSIGN(CPMBottomUpDataReader);
 };
 
 }  // namespace caffe

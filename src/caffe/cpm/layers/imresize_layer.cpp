@@ -1,12 +1,5 @@
-#include <vector>
-#include "caffe/layers/imresize_layer.hpp"
-#include <opencv2/core/core.hpp>
-#include <opencv2/contrib/contrib.hpp>
-#include <opencv2/highgui/highgui.hpp>
-#include <opencv2/opencv.hpp>
-
-using namespace std;
-using namespace cv;
+#include "caffe/cpm/layers/imresize_layer.hpp"
+#include <opencv2/imgproc/imgproc.hpp>
 
 namespace caffe {
 
@@ -16,7 +9,7 @@ void ImResizeLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom, const 
 	targetSpatialWidth = imresize_param.target_spatial_width(); //temporarily
 	targetSpatialHeight = imresize_param.target_spatial_height();
 	start_scale = imresize_param.start_scale();
-	scale_gap = imresize_param.scale_gap();	
+	scale_gap = imresize_param.scale_gap();
 }
 
 template <typename Dtype>
@@ -27,8 +20,8 @@ void ImResizeLayer<Dtype>::setTargetDimenions(int nw, int nh){
 
 template <typename Dtype>
 void ImResizeLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top){
-	vector<int> bottom_shape = bottom[0]->shape();
-	vector<int> top_shape(bottom_shape);
+	std::vector<int> bottom_shape = bottom[0]->shape();
+	std::vector<int> top_shape(bottom_shape);
 
 	ImResizeParameter imresize_param = this->layer_param_.imresize_param();
 
@@ -47,34 +40,34 @@ void ImResizeLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom, const vec
 
 template <typename Dtype>
 void ImResizeLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top){
-	int num = bottom[0]->shape(0);
-	int channel = bottom[0]->shape(1);
-	int oriSpatialHeight = bottom[0]->shape(2);
-	int oriSpatialWidth = bottom[0]->shape(3);
+	const int num = bottom[0]->shape(0);
+	const int channel = bottom[0]->shape(1);
+	const int oriSpatialHeight = bottom[0]->shape(2);
+	const int oriSpatialWidth = bottom[0]->shape(3);
 
 	//stupid method
 	for(int n = 0; n < num; n++){
 		for(int c = 0; c < channel; c++){
-			Mat src(oriSpatialWidth, oriSpatialHeight, CV_32FC1);
-			Mat dst(targetSpatialWidth, targetSpatialHeight, CV_32FC1);
 			//fill src
-			int offset2 = oriSpatialHeight * oriSpatialWidth;
-			int offset3 = offset2 * channel;
-			for (int y = 0; y < oriSpatialHeight; y++){
-				for (int x = 0; x < oriSpatialWidth; x++){
-					Dtype* src_pointer = bottom[0]->mutable_cpu_data();
-				    src.at<Dtype>(x,y) = src_pointer[n*offset3 + c*offset2 + y*oriSpatialWidth + x];
+			cv::Mat src(oriSpatialWidth, oriSpatialHeight, CV_32FC1);
+			const int src_offset2 = oriSpatialHeight * oriSpatialWidth;
+			const int src_offset3 = src_offset2 * channel;
+			const Dtype* const src_pointer = bottom[0]->cpu_data();
+			for (int x = 0; x < oriSpatialWidth; x++){
+				for (int y = 0; y < oriSpatialHeight; y++){
+				    src.at<Dtype>(x,y) = src_pointer[n*src_offset3 + c*src_offset2 + y*oriSpatialWidth + x];
 				}
 			}
 			//resize
-			cv::resize(src, dst, dst.size(), 0, 0, INTER_CUBIC);
+			cv::Mat dst(targetSpatialWidth, targetSpatialHeight, CV_32FC1);
+			cv::resize(src, dst, dst.size(), 0, 0, CV_INTER_CUBIC);
 			//fill top
-			offset2 = targetSpatialHeight * targetSpatialWidth;
-			offset3 = offset2 * channel;
-			for (int y = 0; y < targetSpatialHeight; y++){
-				for (int x = 0; x < targetSpatialWidth; x++){
-					Dtype* dst_pointer = top[0]->mutable_cpu_data();
-				    dst_pointer[n*offset3 + c*offset2 + y*targetSpatialWidth + x] = dst.at<Dtype>(x,y);
+			const int dst_offset2 = targetSpatialHeight * targetSpatialWidth;
+			const int dst_offset3 = dst_offset2 * channel;
+			Dtype* dst_pointer = top[0]->mutable_cpu_data();
+			for (int x = 0; x < targetSpatialWidth; x++){
+				for (int y = 0; y < targetSpatialHeight; y++){
+				    dst_pointer[n*dst_offset3 + c*dst_offset2 + y*targetSpatialWidth + x] = dst.at<Dtype>(x,y);
 				}
 			}
 		}

@@ -46,9 +46,6 @@ class DB {
 };
 
 DB* GetDB(DataParameter::DB backend);
-DB* GetDB(CPMDataParameter::DB backend);
-DB* GetDB(CocoDataParameter::DB backend);
-DB* GetDB(CPMBottomUpDataParameter::DB backend);
 DB* GetDB(const string& backend);
 
 }  // namespace db

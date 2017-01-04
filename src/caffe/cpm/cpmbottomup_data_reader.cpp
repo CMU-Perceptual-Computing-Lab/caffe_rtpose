@@ -1,11 +1,13 @@
-#include <boost/thread.hpp>
+#include "caffe/cpm/layers/cpmbottomup_data_layer.hpp"
+
 #include <map>
 #include <string>
 #include <vector>
+#include <boost/thread.hpp>
 
 #include "caffe/common.hpp"
-#include "caffe/cpmbottomup_data_reader.hpp"
-#include "caffe/layers/cpmbottomup_data_layer.hpp"
+#include "caffe/cpm/cpmbottomup_data_reader.hpp"
+#include "caffe/cpm/util/db.hpp"
 #include "caffe/proto/caffe.pb.h"
 
 namespace caffe {

@@ -1,15 +1,8 @@
-#ifndef CAFFE_CPMDATA_LAYER_HPP_
-#define CAFFE_CPMDATA_LAYER_HPP_
+#ifndef CAFFE_CPM_LAYER_CPMDATA_LAYER_HPP_
+#define CAFFE_CPM_LAYER_CPMDATA_LAYER_HPP_
 
-#include <vector>
-
-#include "caffe/blob.hpp"
-#include "caffe/cpmdata_reader.hpp"
-#include "caffe/data_transformer.hpp"
-#include "caffe/internal_thread.hpp"
-#include "caffe/layer.hpp"
+#include "caffe/cpm/cpmdata_reader.hpp"
 #include "caffe/layers/base_data_layer.hpp"
-#include "caffe/proto/caffe.pb.h"
 #include "caffe/util/db.hpp"
 
 namespace caffe {
@@ -38,4 +31,4 @@ class CPMDataLayer : public BasePrefetchingDataLayer<Dtype> {
 
 }  // namespace caffe
 
-#endif  // CAFFE_CPMDATA_LAYER_HPP_
+#endif  // CAFFE_CPM_LAYER_CPMDATA_LAYER_HPP_

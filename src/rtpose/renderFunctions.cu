@@ -1,5 +1,5 @@
 #include "rtpose/renderFunctions.h"
-#include "caffe/util/math_functions.hpp"  // caffe::updiv
+#include "caffe/cpm/util/math_functions.hpp"  // caffe::updiv
 
 #define numThreadsPerBlock_1d 32
 #define numThreadsPerBlock 1024

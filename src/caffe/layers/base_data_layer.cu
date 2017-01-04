@@ -20,6 +20,7 @@ void BasePrefetchingDataLayer<Dtype>::Forward_gpu(
     caffe_copy(batch->label_.count(), batch->label_.gpu_data(),
         top[1]->mutable_gpu_data());
 
+    // CPM extra code: if statement
     if(top.size() >= 3){
       // masks
       top[2]->ReshapeLike(batch->missing_part_mask_);

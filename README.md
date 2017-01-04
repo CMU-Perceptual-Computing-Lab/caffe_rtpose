@@ -97,22 +97,49 @@ where the joint order of the COCO parts is: (see src/rtpose/modelDescriptorFacto
 	}
 ```
 
+## Custom Caffe:
+We modified and added several Caffe files in `include/caffe` and `src/caffe`. In case you want to use your own Caffe distribution, these are the files we added and modified:
+1. Added folders in `include/caffe` and `src/caffe`: `include/caffe/cpm` and `src/caffe/cpm`.
+2. Modified files in `include/caffe` (search for `// CPM extra code:` to find the modified code): `layers/base_data_layer.h`.
+3. Modified files in `src/caffe` (search for `// CPM extra code:` to find the modified code): `proto/caffe.proto`, `layers/base_data_layer.cpp`, `layers/base_data_layer.cu` and `util/blocking_queue.cpp`.
+4. Replaced files: `README.md`.
+5. Added files: `install_caffe_and_cpm.sh`, `Makefile.config.Ubuntu14.example` (extracted from `Makefile.config.example`) and `Makefile.config.Ubuntu16.example` (extracted from `Makefile.config.example`).
+6. Other added folders: `model/`, `examples/rtpose`, `/include/rtpose` and `/src/rtpose`.
+7. Other modified files: `Makefile`.
+8. Optional - deleted Caffe files and folders (only to save space): `Makefile.config.example`, `data/`, `examples/` (do not delete `examples/rtpose`) and `models/`.
+
+
+## Custom Caffe layers:
+We created a few Caffe layers (located in `include/caffe/cpm/layers` and `src/caffe/cpm/layers`):
+1. CocoDetectDataLayer: Only used to load data for training (training code temporary unavailable).
+2. CPMBottomUpDataLayer: Only used to load data for training (training code temporary unavailable).
+3. CPMDataLayer: Only used to load data for training (training code temporary unavailable).
+4. ImResizeLayer: Only used for testing (backward pass not implemented). This layer performs 2-D resize over the 4-D data. I.e., given a 4-D input of size (`num` x `channels` x `height_input` x `width_input`), the layer returns a 4-D output of size (`num` x `channels` x `height_output` x `width_output`). It is independently applied to each dimension of `num` and `channels`. Its parameters are:
+	4.1. `factor`: Scaling factor with respect to the input width and height. `factor` is the alternative to the pair of variables [`target_spatial_width`, `target_spatial_height`]. If `factor != 0`, the latter are ignored.
+  4.2. `scale_gap` and `start_scale`: These parameters are related and used for doing scale search in testing mode. If `start_scale = 1` (default), the CNN input patch size is the net resolution (set with `--net_resolution`). `scale_gap` is used to calculate the scale difference between scales. This parameters are related with the flag `--num_scales`. For instance, using `--start_scale 1 --num_scales 3 --scale_gap 0.1` means using 3 scales: 1, 1-0.1, 1-2*0.1, hence the different patch sizes correspond to the net resolution multiplied by these scales values.
+  4.3. `target_spatial_width`: Alternative to `factor`. It sets the output width. Ignored if `factor != 0`.
+  4.4. `target_spatial_height`: Alternative to `factor`. It sets the output height. Ignored if `factor != 0`.
+5. NmsLayer: Only used for testing (backward pass not implemented). This layer performs 3-D Non-Maximum Suppression over the 4-D data. I.e., given a 4-D input of size (`num` x `channels` x `height` x `width`), it returns a 4-D output of size (`num` x `num_parts` x `max_peaks+1` x `3`). It is independently applied to each dimension of `num`. The seconds dimension corresponds to the number of limbs (`num_parts`). The third dimension indicates the maximum number of peaks to be analyzed (`max_peaks+1`). Finally, the last one corresponds to the `x`, `y` and `score` values (`3`). Its parameters are:
+	5.1. `max_peaks`: The number of peaks to be considered. The last `total_peaks` - `max_peaks` peaks are discarded.
+  5.2. `num_parts`: The number of limbs to detect (e.g. 15 for MPI and 18 for COCO).
+  5.3. `threshold`: Any input value smaller than this threshold is set to 0.
+
+
 ## Citation
 Please cite the paper in your publications if it helps your research:
 
-    
-    
+
+
     @article{cao2016realtime,
 	  title={Realtime Multi-Person 2D Pose Estimation using Part Affinity Fields},
 	  author={Zhe Cao and Tomas Simon and Shih-En Wei and Yaser Sheikh},
 	  journal={arXiv preprint arXiv:1611.08050},
 	  year={2016}
 	  }
-	  
+
     @inproceedings{wei2016cpm,
       author = {Shih-En Wei and Varun Ramakrishna and Takeo Kanade and Yaser Sheikh},
       booktitle = {CVPR},
       title = {Convolutional pose machines},
       year = {2016}
       }
-

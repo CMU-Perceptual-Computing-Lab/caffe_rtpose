@@ -1,14 +1,14 @@
 #include "caffe/layers/maximum_layer.hpp"
-
+#include "caffe/cpm/util/math_functions.hpp"  // caffe::updiv
 
 namespace caffe {
 
 #define numThreadsPerBlock 256
 
 template <typename Dtype>
-__global__ void rowReduceMax_kernel(Dtype* d_scoreMap, Dtype* d_intermediate, int num_template, 
+__global__ void rowReduceMax_kernel(Dtype* d_scoreMap, Dtype* d_intermediate, int num_template,
 	                                int image_width, int image_height){
-	
+
 	const int i = blockDim.x * blockIdx.x + threadIdx.x; //global thread id (0 - 32 * total_threads)
 	int duty_row = i >> 5; //i / 32; //duty row indexing is skipping [301 - 512] row
     int duty_template = duty_row / image_height;
@@ -118,7 +118,7 @@ __global__ void columnReduceMax_kernel(Dtype* d_intermediate, Dtype* d_final,
 	    	}
 	    }
 	    // if(duty_template == 0){
-	    // 	printf("thread %d: minval %f, xargmin %d, yargmin %d, warp_id %d\n", 
+	    // 	printf("thread %d: minval %f, xargmin %d, yargmin %d, warp_id %d\n",
 	    // 		offset, minVal, xargmin, yargmin, warp_id);
 	    // }
 	    col_maxVals[warp_id][offset] = maxVal;
@@ -179,11 +179,11 @@ void MaximumLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom, const 
 	int channel = bottom[0]->shape(1);
 
 	int num_template = num * channel;
-	
+
 	//Phase 1: 32 threads per row for row_reduce
 	int total_rows = num * channel * oriSpatialHeight;
 	rowReduceMax_kernel<<<updiv(total_rows * 32, numThreadsPerBlock), numThreadsPerBlock>>>
-               					(bottom[0]->mutable_gpu_data(), rowReduce.mutable_gpu_data(), num_template,  
+               					(bottom[0]->mutable_gpu_data(), rowReduce.mutable_gpu_data(), num_template,
 	                                oriSpatialWidth, oriSpatialHeight);
 
 

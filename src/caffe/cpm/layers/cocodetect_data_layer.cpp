@@ -1,3 +1,5 @@
+#include "caffe/cpm/layers/cocodetect_data_layer.hpp"
+
 #ifdef USE_OPENCV
 #include <opencv2/core/core.hpp>
 #endif  // USE_OPENCV
@@ -5,25 +7,25 @@
 
 #include <vector>
 
+#include "caffe/cpm/cocodetect_data_reader.hpp"
 #include "caffe/data_transformer.hpp"
-#include "caffe/layers/cpm_data_layer.hpp"
 #include "caffe/util/benchmark.hpp"
 
 namespace caffe {
 
 template <typename Dtype>
-CPMDataLayer<Dtype>::CPMDataLayer(const LayerParameter& param)
+CocoDetectDataLayer<Dtype>::CocoDetectDataLayer(const LayerParameter& param)
   : BasePrefetchingDataLayer<Dtype>(param),
     reader_(param) {
 }
 
 template <typename Dtype>
-CPMDataLayer<Dtype>::~CPMDataLayer() {
+CocoDetectDataLayer<Dtype>::~CocoDetectDataLayer() {
   this->StopInternalThread();
 }
 
 template <typename Dtype>
-void CPMDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
+void CocoDetectDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {
   // Read a data point, and use it to initialize the top blob.
   // Datum& datum = *(reader_.full().peek());
@@ -37,7 +39,7 @@ void CPMDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
   vector<int> top_shape(4);
 
   // image
-  const int batch_size = this->layer_param_.cpmdata_param().batch_size();
+  const int batch_size = this->layer_param_.cocodata_param().batch_size();
   const int height = this->layer_param_.transform_param().crop_size_y();
   const int width = this->layer_param_.transform_param().crop_size_x();
   const bool put_gaussian = this->layer_param_.transform_param().put_gaussian();
@@ -64,19 +66,20 @@ void CPMDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
   // label and missed-part mask
   if (this->output_labels_) {
     const int stride = this->layer_param_.transform_param().stride();
-    int num_parts = this->layer_param_.transform_param().num_parts();
-    
+    //int num_parts = this->layer_param_.transform_param().num_parts();
+    int num_parts = 1; //detection net
+
     if(this->layer_param_.transform_param().has_masks()) //for mask channel
       num_parts++;
 
-    top[1]->Reshape(batch_size, 2*(num_parts+1), height/stride, width/stride); //plus 1 for background
-    top[2]->Reshape(batch_size, 1, 1, num_parts+1); //plus 1 for background
+    top[1]->Reshape(batch_size, num_parts, height/stride, width/stride);
+    top[2]->Reshape(batch_size, 1, 1, num_parts);
     for (int i = 0; i < this->PREFETCH_COUNT; ++i) {
-      this->prefetch_[i].label_.Reshape(batch_size, 2*(num_parts+1), height/stride, width/stride);
+      this->prefetch_[i].label_.Reshape(batch_size, num_parts, height/stride, width/stride);
       this->prefetch_[i].missing_part_mask_.Reshape(batch_size, 1, 1, num_parts);
     }
-    this->transformed_label_.Reshape(1, 2*(num_parts+1), height/stride, width/stride);
-    this->missing_part_mask_.Reshape(1, 1, 1, num_parts+1); //plus 1 for background
+    this->transformed_label_.Reshape(1, num_parts, height/stride, width/stride);
+    this->missing_part_mask_.Reshape(1, 1, 1, num_parts);
 
     LOG(INFO) << "output label size: " << top[1]->num() << ","
         << top[1]->channels() << "," << top[1]->height() << ","
@@ -89,7 +92,7 @@ void CPMDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
 
 // This function is called on prefetch thread
 template<typename Dtype>
-void CPMDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
+void CocoDetectDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
   CPUTimer batch_timer;
   batch_timer.Start();
   double read_time = 0;
@@ -101,10 +104,10 @@ void CPMDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
 
   // Reshape according to the first datum of each batch
   // on single input batches allows for inputs of varying dimension.
-  const int batch_size = this->layer_param_.cpmdata_param().batch_size();
+  const int batch_size = this->layer_param_.cocodata_param().batch_size();
 
   // Datum& datum = *(reader_.full().peek());
-  // Use data_transformer to infer the expected blob shape from datum. 
+  // Use data_transformer to infer the expected blob shape from datum.
   // *** CPMData: no repeated inferring
   // vector<int> top_shape = this->data_transformer_->InferBlobShape(datum);
   // this->transformed_data_.Reshape(top_shape);
@@ -134,15 +137,15 @@ void CPMDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
     this->transformed_label_.set_cpu_data(top_label + offset_label);
     this->missing_part_mask_.set_cpu_data(top_mask + offset_mask);
 
-    this->data_transformer_->Transform_CPM(datum, &(this->transformed_data_), &(this->transformed_label_), 
+    this->data_transformer_->Transform_COCO(datum, &(this->transformed_data_), &(this->transformed_label_),
                                                   &(this->missing_part_mask_), cnt);
     ++cnt;
-    
+
     // Copy label. No need: all done in Transform_CPM
     //if (this->output_labels_) {
     //  top_label[item_id] = datum.label();
     //}
-    
+
     trans_time += timer.MicroSeconds();
 
     reader_.free().push(const_cast<Datum*>(&datum));
@@ -154,7 +157,7 @@ void CPMDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
   DLOG(INFO) << "Transform time: " << trans_time / 1000 << " ms.";
 }
 
-INSTANTIATE_CLASS(CPMDataLayer);
-REGISTER_LAYER_CLASS(CPMData);
+INSTANTIATE_CLASS(CocoDetectDataLayer);
+REGISTER_LAYER_CLASS(CocoDetectData);
 
 }  // namespace caffe

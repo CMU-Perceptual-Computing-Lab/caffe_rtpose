@@ -8,7 +8,8 @@ This project is licensed under the terms of the GPL v3 license [![License](https
 
 ## Quick Start
 1. Required: CUDA & cuDNN installed on your machine.
-2. Build `caffe` & `rtpose.bin` + download the required caffe models (script tested on Ubuntu 14.04 & 16.04, it uses all the available cores in your machine):
+2. If you have installed OpenCV 2.4 in your system, go to step 3. If you are using OpenCV 3, uncomment the line `# OPENCV_VERSION := 3` on the file `Makefile.config.Ubuntu14.example` (for Ubuntu 14) and/or `Makefile.config.Ubuntu16.example` (for Ubuntu 15 or 16). In addition, OpenCV 3 does not incorporate the `opencv_contrib` module by default. Assuming you have manually installed it and you need to use it, append `opencv_contrib` at the end of the line `LIBRARIES += opencv_core opencv_highgui opencv_imgproc` in the `Makefile` file.
+3. Build `caffe` & `rtpose.bin` + download the required caffe models (script tested on Ubuntu 14.04 & 16.04, it uses all the available cores in your machine):**
 ```
 chmod u+x install_caffe_and_cpm.sh
 ./install_caffe_and_cpm.sh

@@ -102,12 +102,13 @@ where the joint order of the COCO parts is: (see src/rtpose/modelDescriptorFacto
 We modified and added several Caffe files in `include/caffe` and `src/caffe`. In case you want to use your own Caffe distribution, these are the files we added and modified:
 
 1. Added folders in `include/caffe` and `src/caffe`: `include/caffe/cpm` and `src/caffe/cpm`.
-2. Modified files in `src/caffe` (search for `// CPM extra code:` to find the modified code): `proto/caffe.proto` and `util/blocking_queue.cpp`.
-3. Replaced files: `README.md`.
-4. Added files: `install_caffe_and_cpm.sh`, `Makefile.config.Ubuntu14.example` (extracted from `Makefile.config.example`) and `Makefile.config.Ubuntu16.example` (extracted from `Makefile.config.example`).
-5. Other added folders: `model/`, `examples/rtpose`, `/include/rtpose` and `/src/rtpose`.
-6. Other modified files: `Makefile`.
-7. Optional - deleted Caffe files and folders (only to save space): `Makefile.config.example`, `data/`, `examples/` (do not delete `examples/rtpose`) and `models/`.
+2. Modified files in `include/caffe` (search for `// CPM extra code:` to find the modified code): `data_transformer.hpp`.
+3. Modified files in `src/caffe` (search for `// CPM extra code:` to find the modified code): `data_transformer.cpp`, `proto/caffe.proto` and `util/blocking_queue.cpp`.
+4. Replaced files: `README.md`.
+5. Added files: `install_caffe_and_cpm.sh`, `Makefile.config.Ubuntu14.example` (extracted from `Makefile.config.example`) and `Makefile.config.Ubuntu16.example` (extracted from `Makefile.config.example`).
+6. Other added folders: `model/`, `examples/rtpose`, `/include/rtpose` and `/src/rtpose`.
+7. Other modified files: `Makefile`.
+8. Optional - deleted Caffe files and folders (only to save space): `Makefile.config.example`, `data/`, `examples/` (do not delete `examples/rtpose`) and `models/`.
 
 
 ## Custom Caffe layers:

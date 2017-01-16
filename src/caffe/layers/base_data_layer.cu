@@ -19,15 +19,6 @@ void BasePrefetchingDataLayer<Dtype>::Forward_gpu(
     // Copy the labels.
     caffe_copy(batch->label_.count(), batch->label_.gpu_data(),
         top[1]->mutable_gpu_data());
-
-    // CPM extra code: if statement
-    if(top.size() >= 3){
-      // masks
-      top[2]->ReshapeLike(batch->missing_part_mask_);
-      // Copy the labels.
-      caffe_copy(batch->missing_part_mask_.count(), batch->missing_part_mask_.gpu_data(),
-          top[2]->mutable_gpu_data());
-    }
   }
   // Ensure the copy is synchronous wrt the host, so that the next batch isn't
   // copied in meanwhile.

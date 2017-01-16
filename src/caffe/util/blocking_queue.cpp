@@ -8,9 +8,6 @@
 // CPM extra code: includes
 #include <utility>  // std::pair
 #include "caffe/cpm/frame.h"
-#include "caffe/cpm/cocodetect_data_reader.hpp"
-#include "caffe/cpm/cpmbottomup_data_reader.hpp"
-#include "caffe/cpm/cpmdata_reader.hpp"
 
 namespace caffe {
 
@@ -99,11 +96,6 @@ template class BlockingQueue<shared_ptr<DataReader::QueuePair> >;
 template class BlockingQueue<P2PSync<float>*>;
 template class BlockingQueue<P2PSync<double>*>;
 // CPM extra code: template class
-template class BlockingQueue<shared_ptr<CPMDataReader::QueuePair> >;
-template class BlockingQueue<shared_ptr<CocoDetectDataReader::QueuePair> >;
-template class BlockingQueue<shared_ptr<CPMBottomUpDataReader::QueuePair> >;
-template class BlockingQueue<pair<int, string> >;
-template class BlockingQueue<pair<int, float*> >;
 template class BlockingQueue<Frame>;
 
 }  // namespace caffe

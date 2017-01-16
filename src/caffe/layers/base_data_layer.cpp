@@ -26,8 +26,7 @@ void BaseDataLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
     output_labels_ = true;
   }
   data_transformer_.reset(
-      // CPM extra code: edited line
-      new CpmDataTransformer<Dtype>(transform_param_, this->phase_));
+      new DataTransformer<Dtype>(transform_param_, this->phase_));
   data_transformer_->InitRand();
   // The subclasses should setup the size of bottom and top
   DataLayerSetUp(bottom, top);
@@ -120,15 +119,6 @@ void BasePrefetchingDataLayer<Dtype>::Forward_cpu(
     // Copy the labels.
     caffe_copy(batch->label_.count(), batch->label_.cpu_data(),
         top[1]->mutable_cpu_data());
-
-    // CPM extra code: if statement
-    // masks
-    if(top.size() >= 3){
-      top[2]->ReshapeLike(batch->missing_part_mask_);
-      // Copy the labels.
-      caffe_copy(batch->missing_part_mask_.count(), batch->missing_part_mask_.cpu_data(),
-          top[2]->mutable_cpu_data());
-    }
   }
 
   prefetch_free_.push(batch);

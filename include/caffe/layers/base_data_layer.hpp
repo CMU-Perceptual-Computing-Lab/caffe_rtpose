@@ -9,8 +9,6 @@
 #include "caffe/layer.hpp"
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/util/blocking_queue.hpp"
-// CPM extra code: includes
-#include "caffe/cpm/cpm_data_transformer.hpp"
 
 namespace caffe {
 
@@ -43,16 +41,14 @@ class BaseDataLayer : public Layer<Dtype> {
 
  protected:
   TransformationParameter transform_param_;
-  // CPM extra code: edited line
-  shared_ptr<CpmDataTransformer<Dtype> > data_transformer_;
+  shared_ptr<DataTransformer<Dtype> > data_transformer_;
   bool output_labels_;
 };
 
 template <typename Dtype>
 class Batch {
  public:
- // CPM extra code: edited line
-  Blob<Dtype> data_, label_, missing_part_mask_;
+  Blob<Dtype> data_, label_;
 };
 
 template <typename Dtype>

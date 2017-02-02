@@ -69,6 +69,7 @@ DEFINE_double(start_scale,          1,              "Initial scale. Must cv::Mat
 DEFINE_double(scale_gap,            0.3,            "Scale gap between scales. No effect unless num_scales>1");
 DEFINE_int32(num_scales,            1,              "Number of scales to average");
 DEFINE_bool(no_display,             false,          "Do not open a display window.");
+DEFINE_bool(no_text,                false,          "Do not write text on output images.");
 
 // Global parameters
 int DISPLAY_RESOLUTION_WIDTH;
@@ -1320,7 +1321,7 @@ void* displayFrame(void *i) { //single thread
         } else {
             snprintf(tmp_str, 256, "%4.2f s/gpu", FLAGS_num_gpu*1.0/FPS);
         }
-        if (1) {
+        if (!FLAGS_no_text) {
         cv::putText(wrap_frame, tmp_str, cv::Point(25,35),
             cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,150,150), 1);
 
@@ -1345,15 +1346,19 @@ void* displayFrame(void *i) { //single thread
                     snprintf(tmp_str, 256, "%10s", conn.c_str());
                 }
             }
-            cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-175+1, 55+1),
-                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255,255,255), 1);
+            if (!FLAGS_no_text) {
+              cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-175+1, 55+1),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255,255,255), 1);
+            }
         }
         if (!FLAGS_video.empty() && FLAGS_write_frames.empty()) {
             snprintf(tmp_str, 256, "Frame %6d", global.uistate.current_frame);
             // cv::putText(wrap_frame, tmp_str, cv::Point(27,37),
             //     cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 2);
-            cv::putText(wrap_frame, tmp_str, cv::Point(25,55),
-                cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,255,255), 1);
+            if (!FLAGS_no_text) {
+              cv::putText(wrap_frame, tmp_str, cv::Point(25,55),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,255,255), 1);
+            }
         }
 
         if (!FLAGS_no_display) {

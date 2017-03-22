@@ -1,11 +1,6 @@
-FROM nvidia/cuda:8.0-cudnn5-devel-ubuntu16.04
-LABEL maintainer caffe-maint@googlegroups.com
+FROM alantrrs/cuda-opencv
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
-        cmake \
-        git \
-        wget \
         libatlas-base-dev \
         libboost-all-dev \
         libgflags-dev \
@@ -13,7 +8,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libhdf5-serial-dev \
         libleveldb-dev \
         liblmdb-dev \
-        libopencv-dev \
         libprotobuf-dev \
         libsnappy-dev \
         protobuf-compiler \

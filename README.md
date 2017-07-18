@@ -1,7 +1,7 @@
 Realtime Multiperson Pose Estimation
 ====================================
-## New faster version released as library!!!
-
+## New version released as library!!!
+### Includes hands and face keypoints, Windows version, and it is faster!
 ### https://github.com/CMU-Perceptual-Computing-Lab/openpose
 
 ### We will eventually close this repository and just maintain OpenPose. Please move there!
